@@ -13,6 +13,8 @@ from datetime import datetime
 
 from file_scanner import FileScanner, FolderInfo, format_size
 from mapping_manager import MappingManager
+from gui_destination_manager import DestinationManagerDialog, QuickMapDialog
+from gui_mapping_panel import MappingPanel, MappingStatsPanel
 
 
 class MainWindow:
@@ -33,6 +35,9 @@ class MainWindow:
         self.scanner = FileScanner()
         self.mapping_manager = MappingManager()
         self.current_scan_results: List[FolderInfo] = []
+        self.path_to_folder_info = {}  # Map paths to FolderInfo objects
+        self.mapping_panel = None
+        self.stats_panel = None
 
         # Setup UI
         self._create_menu()
@@ -59,6 +64,14 @@ class MainWindow:
         menubar.add_cascade(label="Scan", menu=scan_menu)
         scan_menu.add_command(label="Scan Folder...", command=self._scan_folder)
         scan_menu.add_command(label="Clear Cache", command=self._clear_cache)
+
+        # Mapping menu
+        mapping_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Mapping", menu=mapping_menu)
+        mapping_menu.add_command(label="Manage Destinations...", command=self._manage_destinations)
+        mapping_menu.add_command(label="Map Selected Folder...", command=self._map_selected_folder)
+        mapping_menu.add_separator()
+        mapping_menu.add_command(label="Clear All Mappings", command=self._clear_all_mappings)
 
         # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -91,10 +104,28 @@ class MainWindow:
             side=tk.LEFT, fill=tk.Y, padx=5
         )
 
+        # Mapping buttons
+        ttk.Button(
+            toolbar,
+            text="Destinations",
+            command=self._manage_destinations
+        ).pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(
+            toolbar,
+            text="Map Folder",
+            command=self._map_selected_folder
+        ).pack(side=tk.LEFT, padx=2)
+
+        # Separator
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(
+            side=tk.LEFT, fill=tk.Y, padx=5
+        )
+
         # Path label and entry
         ttk.Label(toolbar, text="Scan Path:").pack(side=tk.LEFT, padx=2)
         self.path_var = tk.StringVar()
-        path_entry = ttk.Entry(toolbar, textvariable=self.path_var, width=50)
+        path_entry = ttk.Entry(toolbar, textvariable=self.path_var, width=40)
         path_entry.pack(side=tk.LEFT, padx=2, fill=tk.X, expand=True)
 
         # Browse button
@@ -111,13 +142,13 @@ class MainWindow:
         main_container = ttk.Frame(self.root)
         main_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Create paned window for resizable sections
+        # Create paned window for resizable sections (3 panes)
         paned = ttk.PanedWindow(main_container, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True)
 
         # Left pane - Folder tree
         left_frame = ttk.Frame(paned)
-        paned.add(left_frame, weight=3)
+        paned.add(left_frame, weight=2)
 
         ttk.Label(left_frame, text="Source Folders", font=('Arial', 10, 'bold')).pack(
             side=tk.TOP, pady=5
@@ -162,9 +193,16 @@ class MainWindow:
         self.tree.column('Modified', width=150, minwidth=120)
         self.tree.column('Status', width=100, minwidth=80)
 
-        # Right pane - Details panel
+        # Right pane - Stats and Details panel
         right_frame = ttk.Frame(paned)
         paned.add(right_frame, weight=1)
+
+        # Stats panel
+        self.stats_panel = MappingStatsPanel(right_frame)
+        self.stats_panel.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+
+        # Separator
+        ttk.Separator(right_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
 
         ttk.Label(right_frame, text="Folder Details", font=('Arial', 10, 'bold')).pack(
             side=tk.TOP, pady=5
@@ -189,6 +227,19 @@ class MainWindow:
 
         # Bind selection event
         self.tree.bind('<<TreeviewSelect>>', self._on_folder_select)
+
+        # Context menu for tree
+        self.tree_context_menu = tk.Menu(self.tree, tearoff=0)
+        self.tree_context_menu.add_command(label="Map to Destination...", command=self._map_selected_folder)
+        self.tree_context_menu.add_command(label="Remove Mapping", command=self._remove_mapping_for_selected)
+        self.tree.bind("<Button-3>", self._show_tree_context_menu)
+
+        # Middle pane - Mappings panel
+        middle_frame = ttk.Frame(paned)
+        paned.add(middle_frame, weight=2)
+
+        self.mapping_panel = MappingPanel(middle_frame, on_delete_callback=self._on_mapping_deleted)
+        self.mapping_panel.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
     def _create_statusbar(self) -> None:
         """Create the status bar."""
@@ -281,10 +332,14 @@ class MainWindow:
             return
 
         # Build tree structure
-        # Map paths to tree item IDs
+        # Map paths to tree item IDs and FolderInfo
         path_to_item = {}
+        self.path_to_folder_info = {}
 
         for folder in folders:
+            # Store folder info
+            self.path_to_folder_info[folder.path] = folder
+
             # Determine parent
             parent = ''
             if folder.parent_path and folder.parent_path in path_to_item:
@@ -310,6 +365,9 @@ class MainWindow:
         self.tree.tag_configure('mapped', foreground='green')
         self.tree.tag_configure('unmapped', foreground='black')
 
+        # Update stats
+        self._update_stats()
+
     def _on_folder_select(self, event) -> None:
         """
         Handle folder selection in tree.
@@ -317,25 +375,30 @@ class MainWindow:
         Args:
             event: Tkinter event
         """
-        selection = self.tree.selection()
-        if not selection:
-            return
-
-        # Get selected item
-        item_id = selection[0]
-
-        # Find corresponding folder info
-        folder_name = self.tree.item(item_id, 'text')
-
-        # Find in scan results (simplified - in production use path mapping)
-        folder_info = None
-        for folder in self.current_scan_results:
-            if folder.name == folder_name:
-                folder_info = folder
-                break
-
+        folder_info = self._get_selected_folder()
         if folder_info:
             self._display_folder_details(folder_info)
+
+    def _get_selected_folder(self) -> Optional[FolderInfo]:
+        """
+        Get the FolderInfo for currently selected tree item.
+
+        Returns:
+            FolderInfo object or None
+        """
+        selection = self.tree.selection()
+        if not selection:
+            return None
+
+        item_id = selection[0]
+        folder_name = self.tree.item(item_id, 'text')
+
+        # Find in path_to_folder_info dictionary
+        for path, folder in self.path_to_folder_info.items():
+            if folder.name == folder_name:
+                return folder
+
+        return None
 
     def _display_folder_details(self, folder: FolderInfo) -> None:
         """
@@ -395,9 +458,125 @@ Status: {'Mapped' if self.mapping_manager.is_mapped(folder.path) else 'Unmapped'
         messagebox.showinfo(
             "About",
             "File Share to SharePoint Migration Mapper\n\n"
-            "Version 1.0.0 - Phase 1\n\n"
+            "Version 1.0.0 - Phase 2\n\n"
             "A tool for mapping file share folders to SharePoint libraries."
         )
+
+    # Mapping methods
+
+    def _show_tree_context_menu(self, event) -> None:
+        """Show context menu on tree right-click."""
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
+            self.tree_context_menu.post(event.x_root, event.y_root)
+
+    def _manage_destinations(self) -> None:
+        """Open destination manager dialog."""
+        dialog = DestinationManagerDialog(
+            self.root,
+            self.mapping_manager.destinations,
+            callback=self._update_stats
+        )
+
+    def _map_selected_folder(self) -> None:
+        """Map selected folder to a destination."""
+        folder = self._get_selected_folder()
+        if not folder:
+            messagebox.showwarning(
+                "No Selection",
+                "Please select a folder from the source tree to map."
+            )
+            return
+
+        # Check if already mapped
+        if self.mapping_manager.is_mapped(folder.path):
+            if not messagebox.askyesno(
+                "Already Mapped",
+                f"Folder {folder.name} is already mapped.\n\nRemap to a different destination?"
+            ):
+                return
+
+        # Show quick map dialog
+        dialog = QuickMapDialog(
+            self.root,
+            self.mapping_manager.destinations,
+            folder.path
+        )
+        self.root.wait_window(dialog)
+
+        if dialog.result:
+            # Create mapping
+            self.mapping_manager.add_mapping(
+                source_path=folder.path,
+                destination=dialog.result,
+                file_count=folder.file_count,
+                total_size_bytes=folder.total_size,
+                last_modified=folder.last_modified.strftime('%Y-%m-%d %H:%M:%S')
+            )
+
+            # Update UI
+            self._refresh_view()
+            self._update_mappings_display()
+            self.statusbar.config(text=f"Mapped: {folder.name}")
+
+    def _remove_mapping_for_selected(self) -> None:
+        """Remove mapping for selected folder."""
+        folder = self._get_selected_folder()
+        if not folder:
+            return
+
+        if not self.mapping_manager.is_mapped(folder.path):
+            messagebox.showinfo("Not Mapped", f"Folder {folder.name} is not mapped.")
+            return
+
+        if messagebox.askyesno(
+            "Confirm Remove",
+            f"Remove mapping for {folder.name}?"
+        ):
+            self.mapping_manager.remove_mapping(folder.path)
+            self._refresh_view()
+            self._update_mappings_display()
+            self.statusbar.config(text=f"Removed mapping for: {folder.name}")
+
+    def _on_mapping_deleted(self, source_path: str) -> None:
+        """
+        Callback when mapping is deleted from mapping panel.
+
+        Args:
+            source_path: Source path of deleted mapping
+        """
+        self.mapping_manager.remove_mapping(source_path)
+        self._refresh_view()
+        self._update_mappings_display()
+
+    def _clear_all_mappings(self) -> None:
+        """Clear all mappings."""
+        if not self.mapping_manager.mappings:
+            messagebox.showinfo("No Mappings", "There are no mappings to clear.")
+            return
+
+        if messagebox.askyesno(
+            "Confirm Clear All",
+            f"Clear all {len(self.mapping_manager.mappings)} mappings?"
+        ):
+            self.mapping_manager.clear_all_mappings()
+            self._refresh_view()
+            self._update_mappings_display()
+            self.statusbar.config(text="All mappings cleared")
+
+    def _update_mappings_display(self) -> None:
+        """Update the mappings panel display."""
+        if self.mapping_panel:
+            mappings = self.mapping_manager.get_all_mappings()
+            self.mapping_panel.update_mappings(mappings)
+        self._update_stats()
+
+    def _update_stats(self) -> None:
+        """Update statistics display."""
+        if self.stats_panel:
+            stats = self.mapping_manager.get_statistics()
+            self.stats_panel.update_stats(stats)
 
     def run(self) -> None:
         """Start the application main loop."""
