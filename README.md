@@ -9,7 +9,7 @@ Map complex file share reorganizations to SharePoint without expensive migration
 See `DEVELOPMENT_WORKFLOW.md` for complete build instructions.
 
 ## Status
-**Phase 2 Complete** - Mapping functionality implemented
+**Phase 3 Complete** - Filtering and rules implemented
 
 ### Phase 1 Features
 - ✅ File share scanner with metadata collection
@@ -27,6 +27,18 @@ See `DEVELOPMENT_WORKFLOW.md` for complete build instructions.
 - ✅ Visual feedback (green for mapped, black for unmapped)
 - ✅ Context menu for mapping operations
 - ✅ Edit and delete mappings functionality
+
+### Phase 3 Features
+- ✅ Filter configuration UI with comprehensive options
+- ✅ Date-based filtering (files not modified in X days)
+- ✅ Auto-route old files to archive destination
+- ✅ Pattern exclusion rules (wildcards supported)
+- ✅ Common exclusion patterns (temp, cache, system folders)
+- ✅ Size-based filtering (min/max folder size)
+- ✅ File count filtering (min files, skip empty folders)
+- ✅ Combined filter application
+- ✅ View archived folders dialog
+- ✅ Filter statistics and reporting
 
 ## Quick Start
 
@@ -46,6 +58,9 @@ python3 test_scanner.py
 
 # Test mapping functionality (Phase 2)
 python3 test_phase2.py
+
+# Test filtering and rules (Phase 3)
+python3 test_phase3.py
 ```
 
 ## Project Structure
@@ -55,16 +70,18 @@ SPMM/
 ├── gui_main_window.py           # Main window GUI with 3-pane layout
 ├── gui_destination_manager.py   # Destination management dialogs
 ├── gui_mapping_panel.py         # Mapping display and stats panels
+├── gui_filters.py               # Filter configuration UI
 ├── file_scanner.py              # File share scanning logic
 ├── mapping_manager.py           # Mapping data structures
+├── filter_engine.py             # Filtering logic and rules
 ├── test_scanner.py              # Scanner test script
 ├── test_phase2.py               # Phase 2 functionality tests
+├── test_phase3.py               # Phase 3 filtering tests
 ├── test_share/                  # Test folder structure
 ├── requirements.txt             # Dependencies
 └── DEVELOPMENT_WORKFLOW.md      # Build instructions
 ```
 
 ## Next Steps
-- Phase 3: Filtering and rules (date-based, pattern exclusion, size thresholds)
-- Phase 4: Export and persistence (CSV export, save/load projects)
-- Phase 5: Validation and polish (pre-export validation, documentation)
+- Phase 4: Export and persistence (CSV export, JSON projects, summary reports)
+- Phase 5: Validation and polish (pre-export validation, user documentation)

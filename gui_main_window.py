@@ -12,9 +12,11 @@ from typing import Optional, List
 from datetime import datetime
 
 from file_scanner import FileScanner, FolderInfo, format_size
-from mapping_manager import MappingManager
+from mapping_manager import MappingManager, SharePointDestination
 from gui_destination_manager import DestinationManagerDialog, QuickMapDialog
 from gui_mapping_panel import MappingPanel, MappingStatsPanel
+from filter_engine import FilterEngine, FilterConfig, create_default_config
+from gui_filters import FilterConfigDialog
 
 
 class MainWindow:
@@ -34,10 +36,14 @@ class MainWindow:
         # Initialize components
         self.scanner = FileScanner()
         self.mapping_manager = MappingManager()
+        self.filter_engine = FilterEngine(create_default_config())
         self.current_scan_results: List[FolderInfo] = []
+        self.filtered_results: List[FolderInfo] = []
+        self.archived_results: List[FolderInfo] = []
         self.path_to_folder_info = {}  # Map paths to FolderInfo objects
         self.mapping_panel = None
         self.stats_panel = None
+        self.archive_destination: Optional[SharePointDestination] = None
 
         # Setup UI
         self._create_menu()
@@ -72,6 +78,15 @@ class MainWindow:
         mapping_menu.add_command(label="Map Selected Folder...", command=self._map_selected_folder)
         mapping_menu.add_separator()
         mapping_menu.add_command(label="Clear All Mappings", command=self._clear_all_mappings)
+
+        # Filters menu
+        filters_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Filters", menu=filters_menu)
+        filters_menu.add_command(label="Configure Filters...", command=self._configure_filters)
+        filters_menu.add_command(label="Set Archive Destination...", command=self._set_archive_destination)
+        filters_menu.add_separator()
+        filters_menu.add_command(label="Apply Filters to Scan", command=self._apply_filters)
+        filters_menu.add_command(label="View Archived Folders", command=self._view_archived)
 
         # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -458,7 +473,7 @@ Status: {'Mapped' if self.mapping_manager.is_mapped(folder.path) else 'Unmapped'
         messagebox.showinfo(
             "About",
             "File Share to SharePoint Migration Mapper\n\n"
-            "Version 1.0.0 - Phase 2\n\n"
+            "Version 1.0.0 - Phase 3\n\n"
             "A tool for mapping file share folders to SharePoint libraries."
         )
 
@@ -577,6 +592,200 @@ Status: {'Mapped' if self.mapping_manager.is_mapped(folder.path) else 'Unmapped'
         if self.stats_panel:
             stats = self.mapping_manager.get_statistics()
             self.stats_panel.update_stats(stats)
+
+    # Filter methods
+
+    def _configure_filters(self) -> None:
+        """Open filter configuration dialog."""
+        dialog = FilterConfigDialog(
+            self.root,
+            self.filter_engine.config,
+            callback=self._on_filter_config_changed
+        )
+
+    def _on_filter_config_changed(self, config: FilterConfig) -> None:
+        """
+        Callback when filter config changes.
+
+        Args:
+            config: New FilterConfig
+        """
+        self.filter_engine.update_config(config)
+        self.statusbar.config(text="Filter configuration updated")
+
+        # Ask if user wants to reapply filters
+        if self.current_scan_results:
+            if messagebox.askyesno(
+                "Apply Filters",
+                "Filter configuration updated.\n\nReapply filters to current scan?"
+            ):
+                self._apply_filters()
+
+    def _set_archive_destination(self) -> None:
+        """Set the archive destination for old files."""
+        if not self.mapping_manager.destinations:
+            messagebox.showinfo(
+                "No Destinations",
+                "Please add at least one SharePoint destination first."
+            )
+            return
+
+        # Show destination selection dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Select Archive Destination")
+        dialog.geometry("500x300")
+        dialog.transient(self.root)
+
+        ttk.Label(
+            dialog,
+            text="Select destination for archived (old) folders:",
+            font=('Arial', 10, 'bold')
+        ).pack(pady=10)
+
+        # List of destinations
+        listbox = tk.Listbox(dialog)
+        listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        for dest in self.mapping_manager.destinations:
+            display_text = f"{dest.site_url} / {dest.library_name}"
+            if dest.subfolder:
+                display_text += f" / {dest.subfolder}"
+            listbox.insert(tk.END, display_text)
+
+        # Select current if set
+        if self.archive_destination:
+            for i, dest in enumerate(self.mapping_manager.destinations):
+                if dest == self.archive_destination:
+                    listbox.selection_set(i)
+                    break
+
+        def on_select():
+            selection = listbox.curselection()
+            if selection:
+                self.archive_destination = self.mapping_manager.destinations[selection[0]]
+                self.statusbar.config(
+                    text=f"Archive destination set: {self.archive_destination.get_full_destination()}"
+                )
+                dialog.destroy()
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=10)
+
+        ttk.Button(btn_frame, text="Select", command=on_select).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
+
+        dialog.grab_set()
+
+    def _apply_filters(self) -> None:
+        """Apply filters to current scan results."""
+        if not self.current_scan_results:
+            messagebox.showinfo(
+                "No Scan Results",
+                "Please scan a folder first before applying filters."
+            )
+            return
+
+        # Apply filters
+        self.statusbar.config(text="Applying filters...")
+        self.root.update_idletasks()
+
+        self.filtered_results, self.archived_results = self.filter_engine.apply_filters(
+            self.current_scan_results
+        )
+
+        # Auto-map archived folders if archive destination is set
+        if self.archived_results and self.archive_destination:
+            for folder in self.archived_results:
+                if not self.mapping_manager.is_mapped(folder.path):
+                    self.mapping_manager.add_mapping(
+                        source_path=folder.path,
+                        destination=self.archive_destination,
+                        file_count=folder.file_count,
+                        total_size_bytes=folder.total_size,
+                        last_modified=folder.last_modified.strftime('%Y-%m-%d %H:%M:%S'),
+                        notes="Auto-archived by date filter"
+                    )
+
+        # Update display with filtered results
+        self._populate_tree(self.filtered_results)
+        self._update_mappings_display()
+
+        # Show results
+        filter_stats = self.filter_engine.get_statistics()
+        messagebox.showinfo(
+            "Filters Applied",
+            f"Filter results:\n\n"
+            f"Active folders: {len(self.filtered_results)}\n"
+            f"Archived folders: {filter_stats['archived_count']}\n"
+            f"Excluded folders: {filter_stats['excluded_count']}\n\n"
+            f"Total processed: {len(self.current_scan_results)}"
+        )
+
+        self.statusbar.config(text="Filters applied")
+
+    def _view_archived(self) -> None:
+        """View archived folders in a dialog."""
+        if not self.archived_results:
+            messagebox.showinfo(
+                "No Archived Folders",
+                "No folders have been marked for archiving.\n\n"
+                "Configure date filters and apply them to see archived folders."
+            )
+            return
+
+        # Create dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Archived Folders")
+        dialog.geometry("700x500")
+        dialog.transient(self.root)
+
+        ttk.Label(
+            dialog,
+            text=f"Archived Folders ({len(self.archived_results)})",
+            font=('Arial', 12, 'bold')
+        ).pack(pady=10)
+
+        # Tree view
+        tree_frame = ttk.Frame(dialog)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        scrollbar = ttk.Scrollbar(tree_frame)
+        tree = ttk.Treeview(
+            tree_frame,
+            columns=('Path', 'Files', 'Size', 'Modified'),
+            show='headings',
+            yscrollcommand=scrollbar.set
+        )
+        scrollbar.config(command=tree.yview)
+
+        tree.heading('Path', text='Folder Path')
+        tree.heading('Files', text='Files')
+        tree.heading('Size', text='Size')
+        tree.heading('Modified', text='Last Modified')
+
+        tree.column('Path', width=300)
+        tree.column('Files', width=80)
+        tree.column('Size', width=100)
+        tree.column('Modified', width=150)
+
+        for folder in self.archived_results:
+            tree.insert(
+                '',
+                'end',
+                values=(
+                    folder.path,
+                    folder.file_count,
+                    format_size(folder.total_size),
+                    folder.last_modified.strftime('%Y-%m-%d %H:%M')
+                )
+            )
+
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=10)
+
+        dialog.grab_set()
 
     def run(self) -> None:
         """Start the application main loop."""
