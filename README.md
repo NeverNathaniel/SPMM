@@ -9,7 +9,7 @@ Map complex file share reorganizations to SharePoint without expensive migration
 See `DEVELOPMENT_WORKFLOW.md` for complete build instructions.
 
 ## Status
-**Phase 3 Complete** - Filtering and rules implemented
+**Phase 4 Complete** - Export and persistence implemented
 
 ### Phase 1 Features
 - ✅ File share scanner with metadata collection
@@ -40,6 +40,18 @@ See `DEVELOPMENT_WORKFLOW.md` for complete build instructions.
 - ✅ View archived folders dialog
 - ✅ Filter statistics and reporting
 
+### Phase 4 Features
+- ✅ Export mappings to CSV format
+- ✅ Generate comprehensive summary reports
+- ✅ Export unmapped folders list
+- ✅ CSV template generator
+- ✅ Save/load projects (.spmm format)
+- ✅ Project state persistence (JSON)
+- ✅ Resume work on saved projects
+- ✅ New project functionality
+- ✅ All filter settings persisted
+- ✅ Archive destination saved with project
+
 ## Quick Start
 
 ### Requirements
@@ -61,6 +73,9 @@ python3 test_phase2.py
 
 # Test filtering and rules (Phase 3)
 python3 test_phase3.py
+
+# Test export and persistence (Phase 4)
+python3 test_phase4.py
 ```
 
 ## Project Structure
@@ -74,14 +89,16 @@ SPMM/
 ├── file_scanner.py              # File share scanning logic
 ├── mapping_manager.py           # Mapping data structures
 ├── filter_engine.py             # Filtering logic and rules
+├── export_manager.py            # CSV and report export
+├── project_manager.py           # Project save/load
 ├── test_scanner.py              # Scanner test script
 ├── test_phase2.py               # Phase 2 functionality tests
 ├── test_phase3.py               # Phase 3 filtering tests
+├── test_phase4.py               # Phase 4 export/persistence tests
 ├── test_share/                  # Test folder structure
 ├── requirements.txt             # Dependencies
 └── DEVELOPMENT_WORKFLOW.md      # Build instructions
 ```
 
 ## Next Steps
-- Phase 4: Export and persistence (CSV export, JSON projects, summary reports)
-- Phase 5: Validation and polish (pre-export validation, user documentation)
+- Phase 5: Validation and polish (pre-export validation, final testing, documentation)

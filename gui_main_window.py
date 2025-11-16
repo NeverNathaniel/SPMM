@@ -17,6 +17,8 @@ from gui_destination_manager import DestinationManagerDialog, QuickMapDialog
 from gui_mapping_panel import MappingPanel, MappingStatsPanel
 from filter_engine import FilterEngine, FilterConfig, create_default_config
 from gui_filters import FilterConfigDialog
+from export_manager import ExportManager
+from project_manager import ProjectManager
 
 
 class MainWindow:
@@ -37,6 +39,8 @@ class MainWindow:
         self.scanner = FileScanner()
         self.mapping_manager = MappingManager()
         self.filter_engine = FilterEngine(create_default_config())
+        self.export_manager = ExportManager()
+        self.project_manager = ProjectManager()
         self.current_scan_results: List[FolderInfo] = []
         self.filtered_results: List[FolderInfo] = []
         self.archived_results: List[FolderInfo] = []
@@ -44,6 +48,7 @@ class MainWindow:
         self.mapping_panel = None
         self.stats_panel = None
         self.archive_destination: Optional[SharePointDestination] = None
+        self.current_project_file: Optional[str] = None
 
         # Setup UI
         self._create_menu()
@@ -61,7 +66,8 @@ class MainWindow:
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="New Project", command=self._new_project)
         file_menu.add_command(label="Open Project...", command=self._open_project)
-        file_menu.add_command(label="Save Project...", command=self._save_project)
+        file_menu.add_command(label="Save Project", command=self._save_project)
+        file_menu.add_command(label="Save Project As...", command=self._save_project_as)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
 
@@ -87,6 +93,15 @@ class MainWindow:
         filters_menu.add_separator()
         filters_menu.add_command(label="Apply Filters to Scan", command=self._apply_filters)
         filters_menu.add_command(label="View Archived Folders", command=self._view_archived)
+
+        # Export menu
+        export_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Export", menu=export_menu)
+        export_menu.add_command(label="Export to CSV...", command=self._export_csv)
+        export_menu.add_command(label="Generate Summary Report...", command=self._generate_report)
+        export_menu.add_separator()
+        export_menu.add_command(label="Export Unmapped List...", command=self._export_unmapped)
+        export_menu.add_command(label="Export CSV Template...", command=self._export_template)
 
         # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -455,27 +470,250 @@ Status: {'Mapped' if self.mapping_manager.is_mapped(folder.path) else 'Unmapped'
 
     def _new_project(self) -> None:
         """Create a new project."""
-        # TODO: Implement in Phase 4
-        messagebox.showinfo("Not Implemented", "This feature will be available in Phase 4")
+        if self.mapping_manager.mappings or self.mapping_manager.destinations:
+            if not messagebox.askyesno(
+                "New Project",
+                "Creating a new project will clear current data.\n\nContinue?"
+            ):
+                return
+
+        # Clear all data
+        self.mapping_manager.clear_all_mappings()
+        self.mapping_manager.destinations.clear()
+        self.current_scan_results.clear()
+        self.filtered_results.clear()
+        self.archived_results.clear()
+        self.path_to_folder_info.clear()
+        self.archive_destination = None
+        self.current_project_file = None
+        self.path_var.set("")
+
+        # Reset filter config
+        self.filter_engine.update_config(create_default_config())
+
+        # Clear tree
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        # Update displays
+        self._update_mappings_display()
+        self.statusbar.config(text="New project created")
 
     def _open_project(self) -> None:
         """Open an existing project."""
-        # TODO: Implement in Phase 4
-        messagebox.showinfo("Not Implemented", "This feature will be available in Phase 4")
+        file_path = filedialog.askopenfilename(
+            title="Open Project",
+            filetypes=[("SPMM Project", "*.spmm"), ("All Files", "*.*")],
+            defaultextension=".spmm"
+        )
+
+        if not file_path:
+            return
+
+        project_data = self.project_manager.load_project(file_path)
+        if not project_data:
+            messagebox.showerror(
+                "Load Failed",
+                "Failed to load project file."
+            )
+            return
+
+        # Apply project data
+        if self.project_manager.apply_project_data(project_data, self.mapping_manager):
+            # Update filter config
+            self.filter_engine.update_config(project_data['filter_config'])
+
+            # Update archive destination
+            self.archive_destination = project_data.get('archive_destination')
+
+            # Update scan path
+            if project_data.get('scan_path'):
+                self.path_var.set(project_data['scan_path'])
+
+            # Update displays
+            self._update_mappings_display()
+
+            self.current_project_file = file_path
+            self.statusbar.config(text=f"Loaded project: {file_path}")
+
+            messagebox.showinfo(
+                "Project Loaded",
+                f"Loaded {len(self.mapping_manager.mappings)} mappings from {file_path}"
+            )
+        else:
+            messagebox.showerror(
+                "Load Failed",
+                "Failed to apply project data."
+            )
 
     def _save_project(self) -> None:
         """Save current project."""
-        # TODO: Implement in Phase 4
-        messagebox.showinfo("Not Implemented", "This feature will be available in Phase 4")
+        if self.current_project_file:
+            self._save_project_to_file(self.current_project_file)
+        else:
+            self._save_project_as()
+
+    def _save_project_as(self) -> None:
+        """Save project as new file."""
+        file_path = filedialog.asksaveasfilename(
+            title="Save Project As",
+            filetypes=[("SPMM Project", "*.spmm"), ("All Files", "*.*")],
+            defaultextension=".spmm"
+        )
+
+        if file_path:
+            self._save_project_to_file(file_path)
+
+    def _save_project_to_file(self, file_path: str) -> None:
+        """Save project to specified file."""
+        if self.project_manager.save_project(
+            file_path,
+            self.mapping_manager,
+            self.filter_engine.config,
+            self.path_var.get(),
+            self.archive_destination
+        ):
+            self.current_project_file = file_path
+            self.statusbar.config(text=f"Saved project: {file_path}")
+            messagebox.showinfo(
+                "Project Saved",
+                f"Saved project to {file_path}"
+            )
+        else:
+            messagebox.showerror(
+                "Save Failed",
+                "Failed to save project file."
+            )
 
     def _show_about(self) -> None:
         """Show about dialog."""
         messagebox.showinfo(
             "About",
             "File Share to SharePoint Migration Mapper\n\n"
-            "Version 1.0.0 - Phase 3\n\n"
+            "Version 1.0.0 - Phase 4\n\n"
             "A tool for mapping file share folders to SharePoint libraries."
         )
+
+    # Export methods
+
+    def _export_csv(self) -> None:
+        """Export mappings to CSV."""
+        if not self.mapping_manager.mappings:
+            messagebox.showwarning(
+                "No Mappings",
+                "No mappings to export. Please create mappings first."
+            )
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Export Mappings to CSV",
+            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
+            defaultextension=".csv"
+        )
+
+        if not file_path:
+            return
+
+        mappings = self.mapping_manager.get_all_mappings()
+        if self.export_manager.export_to_csv(mappings, file_path):
+            messagebox.showinfo(
+                "Export Complete",
+                f"Exported {len(mappings)} mappings to:\n{file_path}"
+            )
+            self.statusbar.config(text=f"Exported to {file_path}")
+        else:
+            messagebox.showerror(
+                "Export Failed",
+                "Failed to export mappings to CSV."
+            )
+
+    def _generate_report(self) -> None:
+        """Generate summary report."""
+        file_path = filedialog.asksaveasfilename(
+            title="Generate Summary Report",
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+            defaultextension=".txt"
+        )
+
+        if not file_path:
+            return
+
+        if self.export_manager.generate_summary_report(
+            self.mapping_manager,
+            self.current_scan_results,
+            self.filtered_results if self.filtered_results else self.current_scan_results,
+            self.archived_results,
+            file_path
+        ):
+            messagebox.showinfo(
+                "Report Generated",
+                f"Summary report saved to:\n{file_path}"
+            )
+            self.statusbar.config(text=f"Report saved to {file_path}")
+        else:
+            messagebox.showerror(
+                "Report Failed",
+                "Failed to generate summary report."
+            )
+
+    def _export_unmapped(self) -> None:
+        """Export unmapped folders list."""
+        if not self.current_scan_results:
+            messagebox.showwarning(
+                "No Scan Data",
+                "Please scan a folder first."
+            )
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Export Unmapped Folders",
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+            defaultextension=".txt"
+        )
+
+        if not file_path:
+            return
+
+        folders_to_check = self.filtered_results if self.filtered_results else self.current_scan_results
+
+        if self.export_manager.generate_unmapped_list(
+            folders_to_check,
+            self.mapping_manager,
+            file_path
+        ):
+            messagebox.showinfo(
+                "Export Complete",
+                f"Unmapped folders list saved to:\n{file_path}"
+            )
+            self.statusbar.config(text=f"Unmapped list saved to {file_path}")
+        else:
+            messagebox.showerror(
+                "Export Failed",
+                "Failed to export unmapped folders list."
+            )
+
+    def _export_template(self) -> None:
+        """Export CSV template."""
+        file_path = filedialog.asksaveasfilename(
+            title="Export CSV Template",
+            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
+            defaultextension=".csv"
+        )
+
+        if not file_path:
+            return
+
+        if self.export_manager.export_csv_template(file_path):
+            messagebox.showinfo(
+                "Template Exported",
+                f"CSV template saved to:\n{file_path}"
+            )
+            self.statusbar.config(text=f"Template saved to {file_path}")
+        else:
+            messagebox.showerror(
+                "Export Failed",
+                "Failed to export CSV template."
+            )
 
     # Mapping methods
 
