@@ -1,0 +1,9 @@
+# File Share to SharePoint Migration Mapping Tool - Dependencies
+
+# Core Dependencies
+# No external dependencies needed for Phase 1 - using Tkinter which comes with Python
+
+# For future phases:
+pandas>=2.0.0
+
+# Python version requirement: 3.10+
