@@ -13,7 +13,6 @@ import logging
 from mapping_manager import MappingManager, SharePointDestination, FolderMapping
 from filter_engine import FilterConfig
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

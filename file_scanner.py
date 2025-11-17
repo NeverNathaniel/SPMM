@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from datetime import datetime
 import logging
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -144,7 +143,11 @@ class FileScanner:
 
             # Progress callback
             if progress_callback:
-                progress_callback(entry_path, len(folders))
+                result = progress_callback(entry_path, len(folders))
+                # If callback returns False, cancel the scan
+                if result is False:
+                    self._cancel_scan = True
+                    return
 
             # Recurse into subdirectory
             self._scan_recursive(

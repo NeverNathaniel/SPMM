@@ -252,9 +252,45 @@ class AddDestinationDialog(tk.Toplevel):
         if not url:
             return False
 
-        # Basic URL validation
-        pattern = r'^https?://[a-zA-Z0-9.-]+\.sharepoint\.com(/.*)?$'
-        return bool(re.match(pattern, url))
+        # More flexible URL validation to support:
+        # - Standard SharePoint (.sharepoint.com)
+        # - Government cloud (.sharepoint.us, .sharepoint-mil.us)
+        # - Custom domains
+        pattern = r'^https?://[a-zA-Z0-9.-]+(/.*)?$'
+        if not re.match(pattern, url):
+            return False
+
+        # Check for common SharePoint indicators
+        url_lower = url.lower()
+        if 'sharepoint' in url_lower or '/sites/' in url_lower or '/teams/' in url_lower:
+            return True
+
+        # For other URLs, just ensure it's a valid HTTP(S) URL
+        return url.startswith('http://') or url.startswith('https://')
+
+    def _validate_library_name(self, name: str) -> bool:
+        """
+        Validate SharePoint library name.
+
+        Args:
+            name: Library name to validate
+
+        Returns:
+            True if valid, False otherwise
+        """
+        if not name:
+            return False
+
+        # SharePoint invalid characters: \ / : * ? " < > | #
+        invalid_chars = r'[\\/:*?"<>|#]'
+        if re.search(invalid_chars, name):
+            return False
+
+        # Check length (SharePoint has 128 char limit for library names)
+        if len(name) > 128:
+            return False
+
+        return True
 
     def _ok(self) -> None:
         """Handle OK button."""
@@ -270,13 +306,44 @@ class AddDestinationDialog(tk.Toplevel):
         if not self._validate_url(site_url):
             messagebox.showerror(
                 "Validation Error",
-                "Invalid SharePoint URL format.\n\n"
-                "Expected format: https://yoursite.sharepoint.com/sites/sitename"
+                "Invalid URL format.\n\n"
+                "Expected format: https://yoursite.sharepoint.com/sites/sitename\n"
+                "or other valid SharePoint URL"
             )
             return
 
         if not library:
             messagebox.showerror("Validation Error", "Library name is required.")
+            return
+
+        if not self._validate_library_name(library):
+            messagebox.showerror(
+                "Validation Error",
+                "Invalid library name.\n\n"
+                "Library names cannot contain: \\ / : * ? \" < > | #\n"
+                "Maximum length: 128 characters"
+            )
+            return
+
+        # Validate subfolder if provided
+        if subfolder and not self._validate_library_name(subfolder):
+            messagebox.showerror(
+                "Validation Error",
+                "Invalid subfolder name.\n\n"
+                "Subfolder names cannot contain: \\ / : * ? \" < > | #\n"
+                "Maximum length: 128 characters"
+            )
+            return
+
+        # Check total path length (SharePoint has 400 char limit for full paths)
+        full_path = f"{site_url}/{library}/{subfolder}" if subfolder else f"{site_url}/{library}"
+        if len(full_path) > 400:
+            messagebox.showerror(
+                "Validation Error",
+                f"Total destination path is too long ({len(full_path)} characters).\n\n"
+                "SharePoint has a 400 character limit for full paths.\n"
+                "Please use shorter site URL, library name, or subfolder."
+            )
             return
 
         # Create result

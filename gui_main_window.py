@@ -21,6 +21,101 @@ from export_manager import ExportManager
 from project_manager import ProjectManager
 
 
+class ProgressDialog(tk.Toplevel):
+    """Progress dialog for scanning operations."""
+
+    def __init__(self, parent: tk.Tk, title: str = "Scanning..."):
+        """
+        Initialize the progress dialog.
+
+        Args:
+            parent: Parent window
+            title: Dialog title
+        """
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("500x150")
+        self.resizable(False, False)
+
+        # Make modal
+        self.transient(parent)
+        self.grab_set()
+
+        self.cancelled = False
+
+        # Create UI
+        frame = ttk.Frame(self, padding=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        # Status label
+        self.status_label = ttk.Label(
+            frame,
+            text="Initializing scan...",
+            wraplength=450
+        )
+        self.status_label.pack(pady=(0, 10))
+
+        # Progress bar (indeterminate mode)
+        self.progress = ttk.Progressbar(
+            frame,
+            mode='indeterminate',
+            length=450
+        )
+        self.progress.pack(pady=(0, 10))
+        self.progress.start(10)
+
+        # Count label
+        self.count_label = ttk.Label(
+            frame,
+            text="Folders found: 0"
+        )
+        self.count_label.pack(pady=(0, 10))
+
+        # Cancel button
+        self.cancel_btn = ttk.Button(
+            frame,
+            text="Cancel",
+            command=self._on_cancel
+        )
+        self.cancel_btn.pack()
+
+        # Center on parent
+        self.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _on_cancel(self):
+        """Handle cancel button click."""
+        self.cancelled = True
+        self.status_label.config(text="Cancelling scan...")
+        self.cancel_btn.config(state='disabled')
+
+    def update_progress(self, current_path: str, count: int):
+        """
+        Update progress information.
+
+        Args:
+            current_path: Current folder being scanned
+            count: Number of folders found
+        """
+        # Truncate long paths
+        if len(current_path) > 60:
+            display_path = "..." + current_path[-57:]
+        else:
+            display_path = current_path
+
+        self.status_label.config(text=f"Scanning: {display_path}")
+        self.count_label.config(text=f"Folders found: {count}")
+        self.update_idletasks()
+
+    def close_dialog(self):
+        """Close the progress dialog."""
+        self.progress.stop()
+        self.grab_release()
+        self.destroy()
+
+
 class MainWindow:
     """Main application window."""
 
@@ -304,6 +399,9 @@ class MainWindow:
         for item in self.tree.get_children():
             self.tree.delete(item)
 
+        # Create and show progress dialog
+        self.progress_dialog = ProgressDialog(self.root, "Scanning Folders")
+
         self.statusbar.config(text="Scanning...")
         self.root.update_idletasks()
 
@@ -321,15 +419,31 @@ class MainWindow:
         """
         try:
             def progress_callback(current_path: str, count: int):
+                # Update progress dialog
+                if hasattr(self, 'progress_dialog'):
+                    self.root.after(
+                        0,
+                        lambda p=current_path, c=count: self.progress_dialog.update_progress(p, c)
+                    )
+                    # Check if cancelled
+                    if self.progress_dialog.cancelled:
+                        return False  # Signal to stop scanning
+
+                # Also update status bar
                 self.root.after(
                     0,
-                    lambda: self.statusbar.config(
-                        text=f"Scanning... ({count} folders found)"
+                    lambda c=count: self.statusbar.config(
+                        text=f"Scanning... ({c} folders found)"
                     )
                 )
+                return True
 
             results = self.scanner.scan_folder(path, progress_callback=progress_callback)
             self.current_scan_results = results
+
+            # Close progress dialog
+            if hasattr(self, 'progress_dialog'):
+                self.root.after(0, lambda: self.progress_dialog.close_dialog())
 
             # Update UI in main thread
             self.root.after(0, lambda: self._populate_tree(results))
@@ -341,6 +455,10 @@ class MainWindow:
             )
 
         except Exception as e:
+            # Close progress dialog on error
+            if hasattr(self, 'progress_dialog'):
+                self.root.after(0, lambda: self.progress_dialog.close_dialog())
+
             self.root.after(
                 0,
                 lambda: messagebox.showerror("Scan Error", str(e))
@@ -365,6 +483,7 @@ class MainWindow:
         # Map paths to tree item IDs and FolderInfo
         path_to_item = {}
         self.path_to_folder_info = {}
+        self.item_to_folder_info = {}  # Map tree item IDs to FolderInfo
 
         for folder in folders:
             # Store folder info
@@ -390,6 +509,7 @@ class MainWindow:
             )
 
             path_to_item[folder.path] = item_id
+            self.item_to_folder_info[item_id] = folder  # Store item ID to folder mapping
 
         # Configure tags for visual feedback
         self.tree.tag_configure('mapped', foreground='green')
@@ -421,14 +541,9 @@ class MainWindow:
             return None
 
         item_id = selection[0]
-        folder_name = self.tree.item(item_id, 'text')
 
-        # Find in path_to_folder_info dictionary
-        for path, folder in self.path_to_folder_info.items():
-            if folder.name == folder_name:
-                return folder
-
-        return None
+        # Look up folder directly by tree item ID
+        return self.item_to_folder_info.get(item_id)
 
     def _display_folder_details(self, folder: FolderInfo) -> None:
         """

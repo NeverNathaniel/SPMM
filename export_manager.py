@@ -13,7 +13,6 @@ import logging
 from mapping_manager import FolderMapping, MappingManager
 from file_scanner import FolderInfo, format_size
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

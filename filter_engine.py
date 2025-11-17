@@ -10,10 +10,10 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 import re
 import logging
+import os
 
 from file_scanner import FolderInfo
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -78,11 +78,30 @@ class FilterEngine:
 
         filtered = []
         archived = []
+        excluded_parent_paths = set()
 
         for folder in folders:
+            # Check if any parent path was excluded
+            is_child_of_excluded = False
+            for excluded_path in excluded_parent_paths:
+                # Normalize paths for comparison
+                folder_path_normalized = os.path.normpath(folder.path)
+                excluded_path_normalized = os.path.normpath(excluded_path)
+
+                # Check if folder is under an excluded parent
+                if folder_path_normalized.startswith(excluded_path_normalized + os.sep):
+                    is_child_of_excluded = True
+                    break
+
+            if is_child_of_excluded:
+                self._excluded_count += 1
+                logger.debug(f"Excluded by parent pattern: {folder.path}")
+                continue
+
             # Check if excluded by pattern
             if self._is_excluded_by_pattern(folder):
                 self._excluded_count += 1
+                excluded_parent_paths.add(folder.path)  # Track for child exclusion
                 logger.debug(f"Excluded by pattern: {folder.path}")
                 continue
 
