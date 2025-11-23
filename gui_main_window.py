@@ -5,6 +5,7 @@ This module provides the main window interface for the File Share to
 SharePoint Migration Mapping Tool.
 """
 
+import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import threading
@@ -142,10 +143,12 @@ class MainWindow:
         self.filtered_results: List[FolderInfo] = []
         self.archived_results: List[FolderInfo] = []
         self.path_to_folder_info = {}  # Map paths to FolderInfo objects
+        self.item_to_folder_info = {}  # Map tree item IDs to FolderInfo
         self.mapping_panel = None
         self.stats_panel = None
         self.archive_destination: Optional[SharePointDestination] = None
         self.current_project_file: Optional[str] = None
+        self._updating_selection = False  # Guard against cross-selection recursion
 
         # Setup UI
         self._create_menu()
@@ -541,12 +544,19 @@ class MainWindow:
         Args:
             event: Tkinter event
         """
+        if self._updating_selection:
+            return
+
         folder_info = self._get_selected_folder()
         if folder_info:
             self._display_folder_details(folder_info)
             # If folder is mapped, also select it in the mapping panel
             if self.mapping_manager.is_mapped(folder_info.path):
-                self.mapping_panel.select_by_source_path(folder_info.path)
+                self._updating_selection = True
+                try:
+                    self.mapping_panel.select_by_source_path(folder_info.path)
+                finally:
+                    self._updating_selection = False
 
     def _on_mapping_selected(self, source_path: str) -> None:
         """
@@ -556,20 +566,27 @@ class MainWindow:
         Args:
             source_path: The source path of the selected mapping
         """
-        # Find and select the corresponding item in the source tree
-        for item_id, folder in self.item_to_folder_info.items():
-            if folder.path == source_path:
-                # Expand parents to make visible
-                parent = self.tree.parent(item_id)
-                while parent:
-                    self.tree.item(parent, open=True)
-                    parent = self.tree.parent(parent)
-                # Select and scroll to item
-                self.tree.selection_set(item_id)
-                self.tree.see(item_id)
-                # Display details
-                self._display_folder_details(folder)
-                break
+        if self._updating_selection:
+            return
+
+        self._updating_selection = True
+        try:
+            # Find and select the corresponding item in the source tree
+            for item_id, folder in self.item_to_folder_info.items():
+                if folder.path == source_path:
+                    # Expand parents to make visible
+                    parent = self.tree.parent(item_id)
+                    while parent:
+                        self.tree.item(parent, open=True)
+                        parent = self.tree.parent(parent)
+                    # Select and scroll to item
+                    self.tree.selection_set(item_id)
+                    self.tree.see(item_id)
+                    # Display details
+                    self._display_folder_details(folder)
+                    break
+        finally:
+            self._updating_selection = False
 
     def _get_selected_folder(self) -> Optional[FolderInfo]:
         """
@@ -777,6 +794,7 @@ Notes: {mapping.notes}
         self.filtered_results.clear()
         self.archived_results.clear()
         self.path_to_folder_info.clear()
+        self.item_to_folder_info.clear()
         self.archive_destination = None
         self.current_project_file = None
         self.path_var.set("")
