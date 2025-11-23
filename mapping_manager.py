@@ -9,7 +9,6 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 import logging
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -147,6 +146,16 @@ class MappingManager:
         Returns:
             FolderMapping object
         """
+        # Validate path length (Windows has 260 character limit)
+        if len(source_path) > 260:
+            logger.warning(
+                f"Source path exceeds Windows MAX_PATH limit ({len(source_path)} > 260): {source_path}"
+            )
+        elif len(source_path) > 240:
+            logger.warning(
+                f"Source path is close to Windows MAX_PATH limit ({len(source_path)} chars): {source_path}"
+            )
+
         mapping = FolderMapping(
             source_path=source_path,
             destination=destination,

@@ -12,7 +12,108 @@ from typing import Optional, List
 from datetime import datetime
 
 from file_scanner import FileScanner, FolderInfo, format_size
-from mapping_manager import MappingManager
+from mapping_manager import MappingManager, SharePointDestination
+from gui_destination_manager import DestinationManagerDialog, QuickMapDialog
+from gui_mapping_panel import MappingPanel, MappingStatsPanel
+from filter_engine import FilterEngine, FilterConfig, create_default_config
+from gui_filters import FilterConfigDialog
+from export_manager import ExportManager
+from project_manager import ProjectManager
+
+
+class ProgressDialog(tk.Toplevel):
+    """Progress dialog for scanning operations."""
+
+    def __init__(self, parent: tk.Tk, title: str = "Scanning..."):
+        """
+        Initialize the progress dialog.
+
+        Args:
+            parent: Parent window
+            title: Dialog title
+        """
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("500x150")
+        self.resizable(False, False)
+
+        # Make modal
+        self.transient(parent)
+        self.grab_set()
+
+        self.cancelled = False
+
+        # Create UI
+        frame = ttk.Frame(self, padding=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        # Status label
+        self.status_label = ttk.Label(
+            frame,
+            text="Initializing scan...",
+            wraplength=450
+        )
+        self.status_label.pack(pady=(0, 10))
+
+        # Progress bar (indeterminate mode)
+        self.progress = ttk.Progressbar(
+            frame,
+            mode='indeterminate',
+            length=450
+        )
+        self.progress.pack(pady=(0, 10))
+        self.progress.start(10)
+
+        # Count label
+        self.count_label = ttk.Label(
+            frame,
+            text="Folders found: 0"
+        )
+        self.count_label.pack(pady=(0, 10))
+
+        # Cancel button
+        self.cancel_btn = ttk.Button(
+            frame,
+            text="Cancel",
+            command=self._on_cancel
+        )
+        self.cancel_btn.pack()
+
+        # Center on parent
+        self.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _on_cancel(self):
+        """Handle cancel button click."""
+        self.cancelled = True
+        self.status_label.config(text="Cancelling scan...")
+        self.cancel_btn.config(state='disabled')
+
+    def update_progress(self, current_path: str, count: int):
+        """
+        Update progress information.
+
+        Args:
+            current_path: Current folder being scanned
+            count: Number of folders found
+        """
+        # Truncate long paths
+        if len(current_path) > 60:
+            display_path = "..." + current_path[-57:]
+        else:
+            display_path = current_path
+
+        self.status_label.config(text=f"Scanning: {display_path}")
+        self.count_label.config(text=f"Folders found: {count}")
+        self.update_idletasks()
+
+    def close_dialog(self):
+        """Close the progress dialog."""
+        self.progress.stop()
+        self.grab_release()
+        self.destroy()
 
 
 class MainWindow:
@@ -32,7 +133,17 @@ class MainWindow:
         # Initialize components
         self.scanner = FileScanner()
         self.mapping_manager = MappingManager()
+        self.filter_engine = FilterEngine(create_default_config())
+        self.export_manager = ExportManager()
+        self.project_manager = ProjectManager()
         self.current_scan_results: List[FolderInfo] = []
+        self.filtered_results: List[FolderInfo] = []
+        self.archived_results: List[FolderInfo] = []
+        self.path_to_folder_info = {}  # Map paths to FolderInfo objects
+        self.mapping_panel = None
+        self.stats_panel = None
+        self.archive_destination: Optional[SharePointDestination] = None
+        self.current_project_file: Optional[str] = None
 
         # Setup UI
         self._create_menu()
@@ -50,7 +161,8 @@ class MainWindow:
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="New Project", command=self._new_project)
         file_menu.add_command(label="Open Project...", command=self._open_project)
-        file_menu.add_command(label="Save Project...", command=self._save_project)
+        file_menu.add_command(label="Save Project", command=self._save_project)
+        file_menu.add_command(label="Save Project As...", command=self._save_project_as)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
 
@@ -59,6 +171,32 @@ class MainWindow:
         menubar.add_cascade(label="Scan", menu=scan_menu)
         scan_menu.add_command(label="Scan Folder...", command=self._scan_folder)
         scan_menu.add_command(label="Clear Cache", command=self._clear_cache)
+
+        # Mapping menu
+        mapping_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Mapping", menu=mapping_menu)
+        mapping_menu.add_command(label="Manage Destinations...", command=self._manage_destinations)
+        mapping_menu.add_command(label="Map Selected Folder...", command=self._map_selected_folder)
+        mapping_menu.add_separator()
+        mapping_menu.add_command(label="Clear All Mappings", command=self._clear_all_mappings)
+
+        # Filters menu
+        filters_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Filters", menu=filters_menu)
+        filters_menu.add_command(label="Configure Filters...", command=self._configure_filters)
+        filters_menu.add_command(label="Set Archive Destination...", command=self._set_archive_destination)
+        filters_menu.add_separator()
+        filters_menu.add_command(label="Apply Filters to Scan", command=self._apply_filters)
+        filters_menu.add_command(label="View Archived Folders", command=self._view_archived)
+
+        # Export menu
+        export_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Export", menu=export_menu)
+        export_menu.add_command(label="Export to CSV...", command=self._export_csv)
+        export_menu.add_command(label="Generate Summary Report...", command=self._generate_report)
+        export_menu.add_separator()
+        export_menu.add_command(label="Export Unmapped List...", command=self._export_unmapped)
+        export_menu.add_command(label="Export CSV Template...", command=self._export_template)
 
         # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -91,10 +229,28 @@ class MainWindow:
             side=tk.LEFT, fill=tk.Y, padx=5
         )
 
+        # Mapping buttons
+        ttk.Button(
+            toolbar,
+            text="Destinations",
+            command=self._manage_destinations
+        ).pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(
+            toolbar,
+            text="Map Folder",
+            command=self._map_selected_folder
+        ).pack(side=tk.LEFT, padx=2)
+
+        # Separator
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(
+            side=tk.LEFT, fill=tk.Y, padx=5
+        )
+
         # Path label and entry
         ttk.Label(toolbar, text="Scan Path:").pack(side=tk.LEFT, padx=2)
         self.path_var = tk.StringVar()
-        path_entry = ttk.Entry(toolbar, textvariable=self.path_var, width=50)
+        path_entry = ttk.Entry(toolbar, textvariable=self.path_var, width=40)
         path_entry.pack(side=tk.LEFT, padx=2, fill=tk.X, expand=True)
 
         # Browse button
@@ -111,13 +267,13 @@ class MainWindow:
         main_container = ttk.Frame(self.root)
         main_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Create paned window for resizable sections
+        # Create paned window for resizable sections (3 panes)
         paned = ttk.PanedWindow(main_container, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True)
 
         # Left pane - Folder tree
         left_frame = ttk.Frame(paned)
-        paned.add(left_frame, weight=3)
+        paned.add(left_frame, weight=2)
 
         ttk.Label(left_frame, text="Source Folders", font=('Arial', 10, 'bold')).pack(
             side=tk.TOP, pady=5
@@ -162,9 +318,16 @@ class MainWindow:
         self.tree.column('Modified', width=150, minwidth=120)
         self.tree.column('Status', width=100, minwidth=80)
 
-        # Right pane - Details panel
+        # Right pane - Stats and Details panel
         right_frame = ttk.Frame(paned)
         paned.add(right_frame, weight=1)
+
+        # Stats panel
+        self.stats_panel = MappingStatsPanel(right_frame)
+        self.stats_panel.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+
+        # Separator
+        ttk.Separator(right_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
 
         ttk.Label(right_frame, text="Folder Details", font=('Arial', 10, 'bold')).pack(
             side=tk.TOP, pady=5
@@ -189,6 +352,19 @@ class MainWindow:
 
         # Bind selection event
         self.tree.bind('<<TreeviewSelect>>', self._on_folder_select)
+
+        # Context menu for tree
+        self.tree_context_menu = tk.Menu(self.tree, tearoff=0)
+        self.tree_context_menu.add_command(label="Map to Destination...", command=self._map_selected_folder)
+        self.tree_context_menu.add_command(label="Remove Mapping", command=self._remove_mapping_for_selected)
+        self.tree.bind("<Button-3>", self._show_tree_context_menu)
+
+        # Middle pane - Mappings panel
+        middle_frame = ttk.Frame(paned)
+        paned.add(middle_frame, weight=2)
+
+        self.mapping_panel = MappingPanel(middle_frame, on_delete_callback=self._on_mapping_deleted)
+        self.mapping_panel.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
     def _create_statusbar(self) -> None:
         """Create the status bar."""
@@ -223,6 +399,9 @@ class MainWindow:
         for item in self.tree.get_children():
             self.tree.delete(item)
 
+        # Create and show progress dialog
+        self.progress_dialog = ProgressDialog(self.root, "Scanning Folders")
+
         self.statusbar.config(text="Scanning...")
         self.root.update_idletasks()
 
@@ -240,15 +419,31 @@ class MainWindow:
         """
         try:
             def progress_callback(current_path: str, count: int):
+                # Update progress dialog
+                if hasattr(self, 'progress_dialog'):
+                    self.root.after(
+                        0,
+                        lambda p=current_path, c=count: self.progress_dialog.update_progress(p, c)
+                    )
+                    # Check if cancelled
+                    if self.progress_dialog.cancelled:
+                        return False  # Signal to stop scanning
+
+                # Also update status bar
                 self.root.after(
                     0,
-                    lambda: self.statusbar.config(
-                        text=f"Scanning... ({count} folders found)"
+                    lambda c=count: self.statusbar.config(
+                        text=f"Scanning... ({c} folders found)"
                     )
                 )
+                return True
 
             results = self.scanner.scan_folder(path, progress_callback=progress_callback)
             self.current_scan_results = results
+
+            # Close progress dialog
+            if hasattr(self, 'progress_dialog'):
+                self.root.after(0, lambda: self.progress_dialog.close_dialog())
 
             # Update UI in main thread
             self.root.after(0, lambda: self._populate_tree(results))
@@ -260,6 +455,10 @@ class MainWindow:
             )
 
         except Exception as e:
+            # Close progress dialog on error
+            if hasattr(self, 'progress_dialog'):
+                self.root.after(0, lambda: self.progress_dialog.close_dialog())
+
             self.root.after(
                 0,
                 lambda: messagebox.showerror("Scan Error", str(e))
@@ -281,10 +480,15 @@ class MainWindow:
             return
 
         # Build tree structure
-        # Map paths to tree item IDs
+        # Map paths to tree item IDs and FolderInfo
         path_to_item = {}
+        self.path_to_folder_info = {}
+        self.item_to_folder_info = {}  # Map tree item IDs to FolderInfo
 
         for folder in folders:
+            # Store folder info
+            self.path_to_folder_info[folder.path] = folder
+
             # Determine parent
             parent = ''
             if folder.parent_path and folder.parent_path in path_to_item:
@@ -305,10 +509,14 @@ class MainWindow:
             )
 
             path_to_item[folder.path] = item_id
+            self.item_to_folder_info[item_id] = folder  # Store item ID to folder mapping
 
         # Configure tags for visual feedback
         self.tree.tag_configure('mapped', foreground='green')
         self.tree.tag_configure('unmapped', foreground='black')
+
+        # Update stats
+        self._update_stats()
 
     def _on_folder_select(self, event) -> None:
         """
@@ -317,25 +525,25 @@ class MainWindow:
         Args:
             event: Tkinter event
         """
-        selection = self.tree.selection()
-        if not selection:
-            return
-
-        # Get selected item
-        item_id = selection[0]
-
-        # Find corresponding folder info
-        folder_name = self.tree.item(item_id, 'text')
-
-        # Find in scan results (simplified - in production use path mapping)
-        folder_info = None
-        for folder in self.current_scan_results:
-            if folder.name == folder_name:
-                folder_info = folder
-                break
-
+        folder_info = self._get_selected_folder()
         if folder_info:
             self._display_folder_details(folder_info)
+
+    def _get_selected_folder(self) -> Optional[FolderInfo]:
+        """
+        Get the FolderInfo for currently selected tree item.
+
+        Returns:
+            FolderInfo object or None
+        """
+        selection = self.tree.selection()
+        if not selection:
+            return None
+
+        item_id = selection[0]
+
+        # Look up folder directly by tree item ID
+        return self.item_to_folder_info.get(item_id)
 
     def _display_folder_details(self, folder: FolderInfo) -> None:
         """
@@ -377,27 +585,560 @@ Status: {'Mapped' if self.mapping_manager.is_mapped(folder.path) else 'Unmapped'
 
     def _new_project(self) -> None:
         """Create a new project."""
-        # TODO: Implement in Phase 4
-        messagebox.showinfo("Not Implemented", "This feature will be available in Phase 4")
+        if self.mapping_manager.mappings or self.mapping_manager.destinations:
+            if not messagebox.askyesno(
+                "New Project",
+                "Creating a new project will clear current data.\n\nContinue?"
+            ):
+                return
+
+        # Clear all data
+        self.mapping_manager.clear_all_mappings()
+        self.mapping_manager.destinations.clear()
+        self.current_scan_results.clear()
+        self.filtered_results.clear()
+        self.archived_results.clear()
+        self.path_to_folder_info.clear()
+        self.archive_destination = None
+        self.current_project_file = None
+        self.path_var.set("")
+
+        # Reset filter config
+        self.filter_engine.update_config(create_default_config())
+
+        # Clear tree
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        # Update displays
+        self._update_mappings_display()
+        self.statusbar.config(text="New project created")
 
     def _open_project(self) -> None:
         """Open an existing project."""
-        # TODO: Implement in Phase 4
-        messagebox.showinfo("Not Implemented", "This feature will be available in Phase 4")
+        file_path = filedialog.askopenfilename(
+            title="Open Project",
+            filetypes=[("SPMM Project", "*.spmm"), ("All Files", "*.*")],
+            defaultextension=".spmm"
+        )
+
+        if not file_path:
+            return
+
+        project_data = self.project_manager.load_project(file_path)
+        if not project_data:
+            messagebox.showerror(
+                "Load Failed",
+                "Failed to load project file."
+            )
+            return
+
+        # Apply project data
+        if self.project_manager.apply_project_data(project_data, self.mapping_manager):
+            # Update filter config
+            self.filter_engine.update_config(project_data['filter_config'])
+
+            # Update archive destination
+            self.archive_destination = project_data.get('archive_destination')
+
+            # Update scan path
+            if project_data.get('scan_path'):
+                self.path_var.set(project_data['scan_path'])
+
+            # Update displays
+            self._update_mappings_display()
+
+            self.current_project_file = file_path
+            self.statusbar.config(text=f"Loaded project: {file_path}")
+
+            messagebox.showinfo(
+                "Project Loaded",
+                f"Loaded {len(self.mapping_manager.mappings)} mappings from {file_path}"
+            )
+        else:
+            messagebox.showerror(
+                "Load Failed",
+                "Failed to apply project data."
+            )
 
     def _save_project(self) -> None:
         """Save current project."""
-        # TODO: Implement in Phase 4
-        messagebox.showinfo("Not Implemented", "This feature will be available in Phase 4")
+        if self.current_project_file:
+            self._save_project_to_file(self.current_project_file)
+        else:
+            self._save_project_as()
+
+    def _save_project_as(self) -> None:
+        """Save project as new file."""
+        file_path = filedialog.asksaveasfilename(
+            title="Save Project As",
+            filetypes=[("SPMM Project", "*.spmm"), ("All Files", "*.*")],
+            defaultextension=".spmm"
+        )
+
+        if file_path:
+            self._save_project_to_file(file_path)
+
+    def _save_project_to_file(self, file_path: str) -> None:
+        """Save project to specified file."""
+        if self.project_manager.save_project(
+            file_path,
+            self.mapping_manager,
+            self.filter_engine.config,
+            self.path_var.get(),
+            self.archive_destination
+        ):
+            self.current_project_file = file_path
+            self.statusbar.config(text=f"Saved project: {file_path}")
+            messagebox.showinfo(
+                "Project Saved",
+                f"Saved project to {file_path}"
+            )
+        else:
+            messagebox.showerror(
+                "Save Failed",
+                "Failed to save project file."
+            )
 
     def _show_about(self) -> None:
         """Show about dialog."""
         messagebox.showinfo(
             "About",
             "File Share to SharePoint Migration Mapper\n\n"
-            "Version 1.0.0 - Phase 1\n\n"
+            "Version 1.0.0 - Phase 4\n\n"
             "A tool for mapping file share folders to SharePoint libraries."
         )
+
+    # Export methods
+
+    def _export_csv(self) -> None:
+        """Export mappings to CSV."""
+        if not self.mapping_manager.mappings:
+            messagebox.showwarning(
+                "No Mappings",
+                "No mappings to export. Please create mappings first."
+            )
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Export Mappings to CSV",
+            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
+            defaultextension=".csv"
+        )
+
+        if not file_path:
+            return
+
+        mappings = self.mapping_manager.get_all_mappings()
+        if self.export_manager.export_to_csv(mappings, file_path):
+            messagebox.showinfo(
+                "Export Complete",
+                f"Exported {len(mappings)} mappings to:\n{file_path}"
+            )
+            self.statusbar.config(text=f"Exported to {file_path}")
+        else:
+            messagebox.showerror(
+                "Export Failed",
+                "Failed to export mappings to CSV."
+            )
+
+    def _generate_report(self) -> None:
+        """Generate summary report."""
+        file_path = filedialog.asksaveasfilename(
+            title="Generate Summary Report",
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+            defaultextension=".txt"
+        )
+
+        if not file_path:
+            return
+
+        if self.export_manager.generate_summary_report(
+            self.mapping_manager,
+            self.current_scan_results,
+            self.filtered_results if self.filtered_results else self.current_scan_results,
+            self.archived_results,
+            file_path
+        ):
+            messagebox.showinfo(
+                "Report Generated",
+                f"Summary report saved to:\n{file_path}"
+            )
+            self.statusbar.config(text=f"Report saved to {file_path}")
+        else:
+            messagebox.showerror(
+                "Report Failed",
+                "Failed to generate summary report."
+            )
+
+    def _export_unmapped(self) -> None:
+        """Export unmapped folders list."""
+        if not self.current_scan_results:
+            messagebox.showwarning(
+                "No Scan Data",
+                "Please scan a folder first."
+            )
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Export Unmapped Folders",
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+            defaultextension=".txt"
+        )
+
+        if not file_path:
+            return
+
+        folders_to_check = self.filtered_results if self.filtered_results else self.current_scan_results
+
+        if self.export_manager.generate_unmapped_list(
+            folders_to_check,
+            self.mapping_manager,
+            file_path
+        ):
+            messagebox.showinfo(
+                "Export Complete",
+                f"Unmapped folders list saved to:\n{file_path}"
+            )
+            self.statusbar.config(text=f"Unmapped list saved to {file_path}")
+        else:
+            messagebox.showerror(
+                "Export Failed",
+                "Failed to export unmapped folders list."
+            )
+
+    def _export_template(self) -> None:
+        """Export CSV template."""
+        file_path = filedialog.asksaveasfilename(
+            title="Export CSV Template",
+            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
+            defaultextension=".csv"
+        )
+
+        if not file_path:
+            return
+
+        if self.export_manager.export_csv_template(file_path):
+            messagebox.showinfo(
+                "Template Exported",
+                f"CSV template saved to:\n{file_path}"
+            )
+            self.statusbar.config(text=f"Template saved to {file_path}")
+        else:
+            messagebox.showerror(
+                "Export Failed",
+                "Failed to export CSV template."
+            )
+
+    # Mapping methods
+
+    def _show_tree_context_menu(self, event) -> None:
+        """Show context menu on tree right-click."""
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
+            self.tree_context_menu.post(event.x_root, event.y_root)
+
+    def _manage_destinations(self) -> None:
+        """Open destination manager dialog."""
+        dialog = DestinationManagerDialog(
+            self.root,
+            self.mapping_manager.destinations,
+            callback=self._update_stats
+        )
+
+    def _map_selected_folder(self) -> None:
+        """Map selected folder to a destination."""
+        folder = self._get_selected_folder()
+        if not folder:
+            messagebox.showwarning(
+                "No Selection",
+                "Please select a folder from the source tree to map."
+            )
+            return
+
+        # Check if already mapped
+        if self.mapping_manager.is_mapped(folder.path):
+            if not messagebox.askyesno(
+                "Already Mapped",
+                f"Folder {folder.name} is already mapped.\n\nRemap to a different destination?"
+            ):
+                return
+
+        # Show quick map dialog
+        dialog = QuickMapDialog(
+            self.root,
+            self.mapping_manager.destinations,
+            folder.path
+        )
+        self.root.wait_window(dialog)
+
+        if dialog.result:
+            # Create mapping
+            self.mapping_manager.add_mapping(
+                source_path=folder.path,
+                destination=dialog.result,
+                file_count=folder.file_count,
+                total_size_bytes=folder.total_size,
+                last_modified=folder.last_modified.strftime('%Y-%m-%d %H:%M:%S')
+            )
+
+            # Update UI
+            self._refresh_view()
+            self._update_mappings_display()
+            self.statusbar.config(text=f"Mapped: {folder.name}")
+
+    def _remove_mapping_for_selected(self) -> None:
+        """Remove mapping for selected folder."""
+        folder = self._get_selected_folder()
+        if not folder:
+            return
+
+        if not self.mapping_manager.is_mapped(folder.path):
+            messagebox.showinfo("Not Mapped", f"Folder {folder.name} is not mapped.")
+            return
+
+        if messagebox.askyesno(
+            "Confirm Remove",
+            f"Remove mapping for {folder.name}?"
+        ):
+            self.mapping_manager.remove_mapping(folder.path)
+            self._refresh_view()
+            self._update_mappings_display()
+            self.statusbar.config(text=f"Removed mapping for: {folder.name}")
+
+    def _on_mapping_deleted(self, source_path: str) -> None:
+        """
+        Callback when mapping is deleted from mapping panel.
+
+        Args:
+            source_path: Source path of deleted mapping
+        """
+        self.mapping_manager.remove_mapping(source_path)
+        self._refresh_view()
+        self._update_mappings_display()
+
+    def _clear_all_mappings(self) -> None:
+        """Clear all mappings."""
+        if not self.mapping_manager.mappings:
+            messagebox.showinfo("No Mappings", "There are no mappings to clear.")
+            return
+
+        if messagebox.askyesno(
+            "Confirm Clear All",
+            f"Clear all {len(self.mapping_manager.mappings)} mappings?"
+        ):
+            self.mapping_manager.clear_all_mappings()
+            self._refresh_view()
+            self._update_mappings_display()
+            self.statusbar.config(text="All mappings cleared")
+
+    def _update_mappings_display(self) -> None:
+        """Update the mappings panel display."""
+        if self.mapping_panel:
+            mappings = self.mapping_manager.get_all_mappings()
+            self.mapping_panel.update_mappings(mappings)
+        self._update_stats()
+
+    def _update_stats(self) -> None:
+        """Update statistics display."""
+        if self.stats_panel:
+            stats = self.mapping_manager.get_statistics()
+            self.stats_panel.update_stats(stats)
+
+    # Filter methods
+
+    def _configure_filters(self) -> None:
+        """Open filter configuration dialog."""
+        dialog = FilterConfigDialog(
+            self.root,
+            self.filter_engine.config,
+            callback=self._on_filter_config_changed
+        )
+
+    def _on_filter_config_changed(self, config: FilterConfig) -> None:
+        """
+        Callback when filter config changes.
+
+        Args:
+            config: New FilterConfig
+        """
+        self.filter_engine.update_config(config)
+        self.statusbar.config(text="Filter configuration updated")
+
+        # Ask if user wants to reapply filters
+        if self.current_scan_results:
+            if messagebox.askyesno(
+                "Apply Filters",
+                "Filter configuration updated.\n\nReapply filters to current scan?"
+            ):
+                self._apply_filters()
+
+    def _set_archive_destination(self) -> None:
+        """Set the archive destination for old files."""
+        if not self.mapping_manager.destinations:
+            messagebox.showinfo(
+                "No Destinations",
+                "Please add at least one SharePoint destination first."
+            )
+            return
+
+        # Show destination selection dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Select Archive Destination")
+        dialog.geometry("500x300")
+        dialog.transient(self.root)
+
+        ttk.Label(
+            dialog,
+            text="Select destination for archived (old) folders:",
+            font=('Arial', 10, 'bold')
+        ).pack(pady=10)
+
+        # List of destinations
+        listbox = tk.Listbox(dialog)
+        listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        for dest in self.mapping_manager.destinations:
+            display_text = f"{dest.site_url} / {dest.library_name}"
+            if dest.subfolder:
+                display_text += f" / {dest.subfolder}"
+            listbox.insert(tk.END, display_text)
+
+        # Select current if set
+        if self.archive_destination:
+            for i, dest in enumerate(self.mapping_manager.destinations):
+                if dest == self.archive_destination:
+                    listbox.selection_set(i)
+                    break
+
+        def on_select():
+            selection = listbox.curselection()
+            if selection:
+                self.archive_destination = self.mapping_manager.destinations[selection[0]]
+                self.statusbar.config(
+                    text=f"Archive destination set: {self.archive_destination.get_full_destination()}"
+                )
+                dialog.destroy()
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=10)
+
+        ttk.Button(btn_frame, text="Select", command=on_select).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
+
+        dialog.grab_set()
+
+    def _apply_filters(self) -> None:
+        """Apply filters to current scan results."""
+        if not self.current_scan_results:
+            messagebox.showinfo(
+                "No Scan Results",
+                "Please scan a folder first before applying filters."
+            )
+            return
+
+        # Apply filters
+        self.statusbar.config(text="Applying filters...")
+        self.root.update_idletasks()
+
+        self.filtered_results, self.archived_results = self.filter_engine.apply_filters(
+            self.current_scan_results
+        )
+
+        # Auto-map archived folders if archive destination is set
+        if self.archived_results and self.archive_destination:
+            for folder in self.archived_results:
+                if not self.mapping_manager.is_mapped(folder.path):
+                    self.mapping_manager.add_mapping(
+                        source_path=folder.path,
+                        destination=self.archive_destination,
+                        file_count=folder.file_count,
+                        total_size_bytes=folder.total_size,
+                        last_modified=folder.last_modified.strftime('%Y-%m-%d %H:%M:%S'),
+                        notes="Auto-archived by date filter"
+                    )
+
+        # Update display with filtered results
+        self._populate_tree(self.filtered_results)
+        self._update_mappings_display()
+
+        # Show results
+        filter_stats = self.filter_engine.get_statistics()
+        messagebox.showinfo(
+            "Filters Applied",
+            f"Filter results:\n\n"
+            f"Active folders: {len(self.filtered_results)}\n"
+            f"Archived folders: {filter_stats['archived_count']}\n"
+            f"Excluded folders: {filter_stats['excluded_count']}\n\n"
+            f"Total processed: {len(self.current_scan_results)}"
+        )
+
+        self.statusbar.config(text="Filters applied")
+
+    def _view_archived(self) -> None:
+        """View archived folders in a dialog."""
+        if not self.archived_results:
+            messagebox.showinfo(
+                "No Archived Folders",
+                "No folders have been marked for archiving.\n\n"
+                "Configure date filters and apply them to see archived folders."
+            )
+            return
+
+        # Create dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Archived Folders")
+        dialog.geometry("700x500")
+        dialog.transient(self.root)
+
+        ttk.Label(
+            dialog,
+            text=f"Archived Folders ({len(self.archived_results)})",
+            font=('Arial', 12, 'bold')
+        ).pack(pady=10)
+
+        # Tree view
+        tree_frame = ttk.Frame(dialog)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        scrollbar = ttk.Scrollbar(tree_frame)
+        tree = ttk.Treeview(
+            tree_frame,
+            columns=('Path', 'Files', 'Size', 'Modified'),
+            show='headings',
+            yscrollcommand=scrollbar.set
+        )
+        scrollbar.config(command=tree.yview)
+
+        tree.heading('Path', text='Folder Path')
+        tree.heading('Files', text='Files')
+        tree.heading('Size', text='Size')
+        tree.heading('Modified', text='Last Modified')
+
+        tree.column('Path', width=300)
+        tree.column('Files', width=80)
+        tree.column('Size', width=100)
+        tree.column('Modified', width=150)
+
+        for folder in self.archived_results:
+            tree.insert(
+                '',
+                'end',
+                values=(
+                    folder.path,
+                    folder.file_count,
+                    format_size(folder.total_size),
+                    folder.last_modified.strftime('%Y-%m-%d %H:%M')
+                )
+            )
+
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=10)
+
+        dialog.grab_set()
 
     def run(self) -> None:
         """Start the application main loop."""
