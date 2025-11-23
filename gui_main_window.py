@@ -19,6 +19,8 @@ from filter_engine import FilterEngine, FilterConfig, create_default_config
 from gui_filters import FilterConfigDialog
 from export_manager import ExportManager
 from project_manager import ProjectManager
+from validators import validate_mappings, ValidationResult
+from gui_validation_report import ValidationReportDialog, QuickValidationDialog
 
 
 class ProgressDialog(tk.Toplevel):
@@ -192,6 +194,8 @@ class MainWindow:
         # Export menu
         export_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Export", menu=export_menu)
+        export_menu.add_command(label="Validate Mappings...", command=self._validate_mappings)
+        export_menu.add_separator()
         export_menu.add_command(label="Export to CSV...", command=self._export_csv)
         export_menu.add_command(label="Generate Summary Report...", command=self._generate_report)
         export_menu.add_separator()
@@ -711,8 +715,25 @@ Status: {'Mapped' if self.mapping_manager.is_mapped(folder.path) else 'Unmapped'
 
     # Export methods
 
+    def _validate_mappings(self) -> None:
+        """Run validation and show report."""
+        result = validate_mappings(
+            self.mapping_manager,
+            self.current_scan_results,
+            self.filtered_results if self.filtered_results else self.current_scan_results
+        )
+
+        # Show validation report dialog
+        dialog = ValidationReportDialog(
+            self.root,
+            result,
+            on_export=lambda: self._do_export_csv(),
+            on_cancel=None
+        )
+        self.root.wait_window(dialog)
+
     def _export_csv(self) -> None:
-        """Export mappings to CSV."""
+        """Export mappings to CSV with pre-validation."""
         if not self.mapping_manager.mappings:
             messagebox.showwarning(
                 "No Mappings",
@@ -720,6 +741,32 @@ Status: {'Mapped' if self.mapping_manager.is_mapped(folder.path) else 'Unmapped'
             )
             return
 
+        # Run validation first
+        result = validate_mappings(
+            self.mapping_manager,
+            self.current_scan_results,
+            self.filtered_results if self.filtered_results else self.current_scan_results
+        )
+
+        # Show validation report if there are issues
+        if result.error_count > 0 or result.warning_count > 0:
+            dialog = ValidationReportDialog(
+                self.root,
+                result,
+                on_export=lambda: self._do_export_csv(),
+                on_cancel=None
+            )
+            self.root.wait_window(dialog)
+
+            # If user cancelled, don't export
+            if dialog.user_choice != 'export':
+                return
+        else:
+            # No issues, proceed directly
+            self._do_export_csv()
+
+    def _do_export_csv(self) -> None:
+        """Actually perform the CSV export."""
         file_path = filedialog.asksaveasfilename(
             title="Export Mappings to CSV",
             filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
