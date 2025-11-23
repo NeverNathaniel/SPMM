@@ -5,6 +5,9 @@ This module handles saving and loading project state to/from JSON files.
 """
 
 import json
+import os
+import tempfile
+import shutil
 from typing import Optional, Dict, List
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +17,34 @@ from mapping_manager import MappingManager, SharePointDestination, FolderMapping
 from filter_engine import FilterConfig
 
 logger = logging.getLogger(__name__)
+
+
+def atomic_write(file_path: str, content: str, encoding: str = 'utf-8') -> None:
+    """
+    Write content to file atomically using temp file and rename.
+
+    This prevents data corruption if the write is interrupted.
+
+    Args:
+        file_path: Destination file path
+        content: Content to write
+        encoding: File encoding (default utf-8)
+    """
+    dir_path = os.path.dirname(os.path.abspath(file_path))
+
+    # Create temp file in same directory (required for atomic rename)
+    fd, temp_path = tempfile.mkstemp(dir=dir_path, suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding=encoding) as f:
+            f.write(content)
+
+        # Atomic rename (works on POSIX and Windows with same filesystem)
+        shutil.move(temp_path, file_path)
+    except Exception:
+        # Clean up temp file on error
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise
 
 
 class ProjectManager:
@@ -107,9 +138,9 @@ class ProjectManager:
                         project_data['archive_destination'] = i
                         break
 
-            # Write to file
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(project_data, f, indent=2)
+            # Write to file atomically to prevent data corruption
+            content = json.dumps(project_data, indent=2)
+            atomic_write(file_path, content)
 
             logger.info(f"Saved project to {file_path}")
             return True

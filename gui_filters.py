@@ -34,6 +34,10 @@ class FilterConfigDialog(tk.Toplevel):
         self._create_widgets()
         self._load_config()
 
+        # Keyboard shortcuts
+        self.bind('<Return>', lambda e: self._apply())
+        self.bind('<Escape>', lambda e: self.destroy())
+
         # Center on parent
         self.grab_set()
 
@@ -58,6 +62,24 @@ class FilterConfigDialog(tk.Toplevel):
 
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Enable mouse wheel scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _on_mousewheel_linux(event):
+            if event.num == 4:
+                canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                canvas.yview_scroll(1, "units")
+
+        # Bind mouse wheel events
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)  # Windows/Mac
+        canvas.bind_all("<Button-4>", _on_mousewheel_linux)  # Linux scroll up
+        canvas.bind_all("<Button-5>", _on_mousewheel_linux)  # Linux scroll down
+
+        # Store canvas reference for cleanup
+        self._canvas = canvas
 
         current_row = 0
 
@@ -352,6 +374,26 @@ class FilterConfigDialog(tk.Toplevel):
                     self.max_size_value_var.get(),
                     self.max_size_unit_var.get()
                 )
+
+            # Validate min/max size relationship
+            if self.min_size_var.get() and self.max_size_var.get():
+                if min_size_bytes > max_size_bytes:
+                    messagebox.showerror(
+                        "Validation Error",
+                        "Minimum size cannot be greater than maximum size.\n\n"
+                        f"Current values:\n"
+                        f"  Minimum: {self.min_size_value_var.get()} {self.min_size_unit_var.get()}\n"
+                        f"  Maximum: {self.max_size_value_var.get()} {self.max_size_unit_var.get()}"
+                    )
+                    return
+
+            # Validate size values are non-negative
+            if min_size_bytes < 0 or max_size_bytes < 0:
+                messagebox.showerror(
+                    "Validation Error",
+                    "Size values cannot be negative."
+                )
+                return
 
             # Create new config
             self.result = FilterConfig(

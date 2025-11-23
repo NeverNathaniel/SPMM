@@ -1,104 +1,229 @@
-# SharePoint Migration Mapper
+# File Share to SharePoint Migration Mapping Tool (SPMM)
 
-Visual tool for mapping file share folders to SharePoint libraries.
+A standalone GUI application for visually mapping file share folders to SharePoint libraries, generating CSV mapping files for use with PowerShell migration scripts.
 
-## Purpose
-Map complex file share reorganizations to SharePoint without expensive migration tools. Creates CSV mapping files for use with PowerShell migration scripts.
+## Features
 
-## Development
-See `DEVELOPMENT_WORKFLOW.md` for complete build instructions.
+- **File Share Scanner**: Scan local or network file shares (UNC paths supported)
+- **Visual Mapping Interface**: 3-pane layout for source folders, destinations, and mappings
+- **Filtering Rules**: Date-based filtering, pattern exclusion, size/count thresholds
+- **Pre-Export Validation**: Checks for SharePoint limits, path lengths, and potential issues
+- **Multiple Export Formats**: CSV for migration scripts, summary reports, unmapped lists
+- **Project Persistence**: Save/load project files to resume work
 
-## Status
-**Phase 4 Complete** - Export and persistence implemented
+## Status: Phase 5 Complete
 
-### Phase 1 Features
-- ✅ File share scanner with metadata collection
-- ✅ GUI with folder tree view
-- ✅ Display file count, size, and modification dates
-- ✅ Mapping data structure
-- ✅ Test folder structure for development
+All development phases have been completed:
 
-### Phase 2 Features
-- ✅ Destination management UI (add/edit/remove SharePoint destinations)
-- ✅ Mapping interface with 3-pane layout
-- ✅ Quick map dialog for folder-to-destination mapping
-- ✅ Current mappings display panel
-- ✅ Mapping statistics panel
-- ✅ Visual feedback (green for mapped, black for unmapped)
-- ✅ Context menu for mapping operations
-- ✅ Edit and delete mappings functionality
+### Phase 1: Basic Structure
+- File share scanner with metadata collection
+- GUI with folder tree view
+- Display file count, size, and modification dates
 
-### Phase 3 Features
-- ✅ Filter configuration UI with comprehensive options
-- ✅ Date-based filtering (files not modified in X days)
-- ✅ Auto-route old files to archive destination
-- ✅ Pattern exclusion rules (wildcards supported)
-- ✅ Common exclusion patterns (temp, cache, system folders)
-- ✅ Size-based filtering (min/max folder size)
-- ✅ File count filtering (min files, skip empty folders)
-- ✅ Combined filter application
-- ✅ View archived folders dialog
-- ✅ Filter statistics and reporting
+### Phase 2: Mapping Functionality
+- Destination management UI (add/edit/remove SharePoint destinations)
+- Mapping interface with 3-pane layout
+- Quick map dialog for folder-to-destination mapping
+- Visual feedback (green for mapped, black for unmapped)
 
-### Phase 4 Features
-- ✅ Export mappings to CSV format
-- ✅ Generate comprehensive summary reports
-- ✅ Export unmapped folders list
-- ✅ CSV template generator
-- ✅ Save/load projects (.spmm format)
-- ✅ Project state persistence (JSON)
-- ✅ Resume work on saved projects
-- ✅ New project functionality
-- ✅ All filter settings persisted
-- ✅ Archive destination saved with project
+### Phase 3: Filtering and Rules
+- Date-based filtering (files not modified in X days)
+- Auto-route old files to archive destination
+- Pattern exclusion rules (wildcards supported)
+- Size-based filtering (min/max folder size)
+- File count filtering (min files, skip empty folders)
+
+### Phase 4: Export and Persistence
+- Export mappings to CSV format
+- Generate comprehensive summary reports
+- Save/load projects (.spmm format)
+- Project state persistence (JSON)
+
+### Phase 5: Validation and Polish
+- Pre-export validation checks
+- Validation report UI with severity filtering
+- SharePoint limit validation (path length, item count)
+- Warning dialogs for issues
+- User documentation
 
 ## Quick Start
 
 ### Requirements
 - Python 3.10 or higher
-- Tkinter (included with Python)
+- Tkinter (usually included with Python)
+
+### Installation
+```bash
+pip install -r requirements.txt
+```
 
 ### Running the Application
 ```bash
-python3 main.py
+python main.py
 ```
 
-### Testing
+## User Guide
+
+### 1. Scan a File Share
+
+1. Enter a folder path in the path field or click **Browse**
+2. Click **Scan** to scan the folder structure
+3. The folder tree will populate with metadata (file count, size, last modified)
+
+### 2. Add SharePoint Destinations
+
+1. Go to **Mapping > Manage Destinations**
+2. Click **Add New** to add a destination
+3. Enter:
+   - SharePoint Site URL (e.g., `https://contoso.sharepoint.com/sites/HR`)
+   - Library Name (e.g., `Documents`)
+   - Subfolder (optional, e.g., `Archive/2024`)
+
+### 3. Map Folders to Destinations
+
+- **Method 1**: Select a folder in the tree, right-click, choose **Map to Destination**
+- **Method 2**: Select folder, go to **Mapping > Map Selected Folder**
+
+Mapped folders will be highlighted in green.
+
+### 4. Apply Filters (Optional)
+
+1. Go to **Filters > Configure Filters**
+2. Configure options:
+   - **Date Threshold**: Archive folders not modified in X days
+   - **Pattern Exclusion**: Exclude folders matching patterns (e.g., `temp`, `*cache*`)
+   - **Size Filters**: Skip folders below/above size thresholds
+   - **File Count**: Skip empty folders or folders with few files
+
+3. Set an archive destination via **Filters > Set Archive Destination**
+4. Apply filters via **Filters > Apply Filters to Scan**
+
+### 5. Validate and Export
+
+1. Go to **Export > Validate Mappings** to check for issues
+2. Review any errors or warnings in the validation report
+3. Go to **Export > Export to CSV** to generate the migration file
+
+## CSV Export Format
+
+The exported CSV contains these columns:
+
+| Column | Description |
+|--------|-------------|
+| SourcePath | Full path to source folder |
+| DestinationSiteURL | SharePoint site URL |
+| DestinationLibrary | Target library name |
+| DestinationFolder | Subfolder within library (optional) |
+| FileCount | Number of files in folder |
+| TotalSizeGB | Total size in gigabytes |
+| LastModified | Last modification date |
+| Notes | Any notes added to mapping |
+
+## Validation Checks
+
+The tool validates against:
+
+- **SharePoint Limits**:
+  - Path length (400 character limit)
+  - Items per folder (5000 item view threshold)
+  - File size limits (250 GB max)
+
+- **Windows Limits**:
+  - MAX_PATH (260 characters)
+
+- **Configuration Issues**:
+  - Missing destinations
+  - Invalid URL formats
+  - Unmapped folders
+  - Folder name collisions at destination
+
+## Project Files
+
+Save your work as a `.spmm` project file via **File > Save Project**.
+
+Project files store:
+- Scan path
+- All destinations
+- All mappings
+- Filter configuration
+- Archive destination
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| Enter | Confirm/Apply in dialogs |
+| Escape | Cancel/Close dialogs |
+| Right-click | Context menu on folders |
+
+## Testing
+
 ```bash
 # Test file scanner (Phase 1)
-python3 test_scanner.py
+python test_scanner.py
 
 # Test mapping functionality (Phase 2)
-python3 test_phase2.py
+python test_phase2.py
 
 # Test filtering and rules (Phase 3)
-python3 test_phase3.py
+python test_phase3.py
 
 # Test export and persistence (Phase 4)
-python3 test_phase4.py
+python test_phase4.py
+
+# Test validation (Phase 5)
+python test_phase5.py
 ```
 
 ## Project Structure
+
 ```
 SPMM/
 ├── main.py                      # Application entry point
-├── gui_main_window.py           # Main window GUI with 3-pane layout
-├── gui_destination_manager.py   # Destination management dialogs
-├── gui_mapping_panel.py         # Mapping display and stats panels
-├── gui_filters.py               # Filter configuration UI
 ├── file_scanner.py              # File share scanning logic
 ├── mapping_manager.py           # Mapping data structures
 ├── filter_engine.py             # Filtering logic and rules
 ├── export_manager.py            # CSV and report export
 ├── project_manager.py           # Project save/load
-├── test_scanner.py              # Scanner test script
-├── test_phase2.py               # Phase 2 functionality tests
-├── test_phase3.py               # Phase 3 filtering tests
-├── test_phase4.py               # Phase 4 export/persistence tests
+├── validators.py                # Pre-export validation logic
+├── gui_main_window.py           # Main window GUI
+├── gui_destination_manager.py   # Destination management dialogs
+├── gui_mapping_panel.py         # Mapping display and stats panels
+├── gui_filters.py               # Filter configuration UI
+├── gui_validation_report.py     # Validation results UI
+├── test_*.py                    # Test scripts
 ├── test_share/                  # Test folder structure
 ├── requirements.txt             # Dependencies
-└── DEVELOPMENT_WORKFLOW.md      # Build instructions
+├── DEVELOPMENT_WORKFLOW.md      # Development instructions
+└── README.md                    # This file
 ```
 
-## Next Steps
-- Phase 5: Validation and polish (pre-export validation, final testing, documentation)
+## Troubleshooting
+
+### "Permission denied" errors during scan
+- Ensure you have read access to the file share
+- Try running as administrator for network shares
+
+### Slow scanning of large shares
+- Scanning shows progress dialog with cancel option
+- Results are cached - subsequent views are faster
+- Consider filtering to reduce the working set
+
+### Path length warnings
+- SharePoint has a 400 character path limit
+- Consider shorter library/folder names
+- Nested subfolders add to path length
+
+## Version History
+
+- **1.0.0** - Initial release (All phases complete)
+  - File share scanning with metadata
+  - Visual mapping interface
+  - Filtering and archiving rules
+  - CSV export with validation
+  - Project save/load functionality
+  - Pre-export validation checks
+
+## License
+
+This project is provided as-is for internal use.

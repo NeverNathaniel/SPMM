@@ -9,6 +9,7 @@ from typing import List, Optional, Set
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 import re
+import fnmatch
 import logging
 import os
 
@@ -160,20 +161,19 @@ class FilterEngine:
         for pattern in self.config.exclude_patterns:
             pattern_lower = pattern.lower()
 
-            # Convert glob pattern to regex
-            # * matches any characters
-            # ? matches single character
-            regex_pattern = pattern_lower.replace('.', r'\.')
-            regex_pattern = regex_pattern.replace('*', '.*')
-            regex_pattern = regex_pattern.replace('?', '.')
-            regex_pattern = f'^{regex_pattern}$'
-
+            # Use fnmatch for safe glob pattern matching (no ReDoS vulnerability)
+            # fnmatch supports: * (matches everything), ? (single char), [seq], [!seq]
             try:
-                # Check both name and full path
-                if re.match(regex_pattern, folder_name) or pattern_lower in folder_path:
+                # Check folder name against pattern
+                if fnmatch.fnmatch(folder_name, pattern_lower):
                     return True
-            except re.error:
-                logger.warning(f"Invalid regex pattern: {pattern}")
+                # Also check if pattern appears in full path (for partial matches)
+                if '*' not in pattern_lower and '?' not in pattern_lower:
+                    # Plain text pattern - check substring match
+                    if pattern_lower in folder_path:
+                        return True
+            except Exception as e:
+                logger.warning(f"Error matching pattern '{pattern}': {e}")
                 continue
 
         return False
