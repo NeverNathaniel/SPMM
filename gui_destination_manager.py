@@ -6,15 +6,24 @@ This module provides UI components for managing SharePoint destinations.
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, TYPE_CHECKING
 from mapping_manager import SharePointDestination
 import re
+
+if TYPE_CHECKING:
+    from mapping_manager import MappingManager
 
 
 class DestinationManagerDialog(tk.Toplevel):
     """Dialog for managing SharePoint destinations."""
 
-    def __init__(self, parent, destinations: List[SharePointDestination], callback: Optional[Callable] = None):
+    def __init__(
+        self,
+        parent,
+        destinations: List[SharePointDestination],
+        callback: Optional[Callable] = None,
+        mapping_manager: Optional['MappingManager'] = None
+    ):
         """
         Initialize the destination manager dialog.
 
@@ -22,6 +31,7 @@ class DestinationManagerDialog(tk.Toplevel):
             parent: Parent window
             destinations: List of existing destinations
             callback: Optional callback when destinations change
+            mapping_manager: Optional MappingManager to update mappings on destination edit
         """
         super().__init__(parent)
         self.title("Manage SharePoint Destinations")
@@ -30,6 +40,7 @@ class DestinationManagerDialog(tk.Toplevel):
 
         self.destinations = destinations
         self.callback = callback
+        self.mapping_manager = mapping_manager
         self.result = None
 
         self._create_widgets()
@@ -121,13 +132,26 @@ class DestinationManagerDialog(tk.Toplevel):
             return
 
         index = selection[0]
-        dest = self.destinations[index]
+        old_dest = self.destinations[index]
 
-        dialog = AddDestinationDialog(self, dest)
+        dialog = AddDestinationDialog(self, old_dest)
         self.wait_window(dialog)
 
         if dialog.result:
-            self.destinations[index] = dialog.result
+            new_dest = dialog.result
+            self.destinations[index] = new_dest
+
+            # Update any existing mappings that reference the old destination
+            if self.mapping_manager:
+                updated_count = 0
+                for mapping in self.mapping_manager.mappings.values():
+                    if mapping.destination == old_dest:
+                        mapping.destination = new_dest
+                        updated_count += 1
+                if updated_count > 0:
+                    # Log or notify that mappings were updated
+                    pass
+
             self._populate_list()
             if self.callback:
                 self.callback()
@@ -178,8 +202,15 @@ class AddDestinationDialog(tk.Toplevel):
         if destination:
             self._load_destination(destination)
 
+        # Keyboard shortcuts
+        self.bind('<Return>', lambda e: self._ok())
+        self.bind('<Escape>', lambda e: self.destroy())
+
         # Center on parent
         self.grab_set()
+
+        # Focus first entry
+        self.after(100, lambda: self.site_url_var.set(self.site_url_var.get()))
 
     def _create_widgets(self) -> None:
         """Create dialog widgets."""
@@ -292,6 +323,43 @@ class AddDestinationDialog(tk.Toplevel):
 
         return True
 
+    def _validate_subfolder_path(self, path: str) -> bool:
+        """
+        Validate SharePoint subfolder path (can contain / for nesting).
+
+        Args:
+            path: Subfolder path to validate (e.g., "Departments/Finance")
+
+        Returns:
+            True if valid, False otherwise
+        """
+        if not path:
+            return True  # Empty subfolder is valid
+
+        # Split by / and validate each segment
+        segments = path.split('/')
+
+        # SharePoint invalid characters for folder names (excluding /)
+        invalid_chars = r'[\\:*?"<>|#]'
+
+        for segment in segments:
+            segment = segment.strip()
+            if not segment:
+                continue  # Skip empty segments (double slashes)
+
+            if re.search(invalid_chars, segment):
+                return False
+
+            # Each segment has its own length limit
+            if len(segment) > 128:
+                return False
+
+        # Total path length check
+        if len(path) > 400:
+            return False
+
+        return True
+
     def _ok(self) -> None:
         """Handle OK button."""
         site_url = self.site_url_var.get().strip()
@@ -325,13 +393,14 @@ class AddDestinationDialog(tk.Toplevel):
             )
             return
 
-        # Validate subfolder if provided
-        if subfolder and not self._validate_library_name(subfolder):
+        # Validate subfolder if provided (allows / for nested paths)
+        if subfolder and not self._validate_subfolder_path(subfolder):
             messagebox.showerror(
                 "Validation Error",
-                "Invalid subfolder name.\n\n"
-                "Subfolder names cannot contain: \\ / : * ? \" < > | #\n"
-                "Maximum length: 128 characters"
+                "Invalid subfolder path.\n\n"
+                "Subfolder segments cannot contain: \\ : * ? \" < > | #\n"
+                "Use / to separate nested folders (e.g., Departments/Finance)\n"
+                "Maximum length per segment: 128 characters"
             )
             return
 

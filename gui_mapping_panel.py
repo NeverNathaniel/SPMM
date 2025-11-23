@@ -180,7 +180,9 @@ class MappingPanel(ttk.Frame):
             f"Delete all {len(self.mappings)} mappings?"
         ):
             if self.on_delete_callback:
-                for mapping in self.mappings:
+                # Make a copy of the list to avoid modification during iteration
+                mappings_to_delete = list(self.mappings)
+                for mapping in mappings_to_delete:
                     self.on_delete_callback(mapping.source_path)
 
     def get_mapping_count(self) -> int:

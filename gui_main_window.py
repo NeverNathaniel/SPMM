@@ -844,7 +844,8 @@ Status: {'Mapped' if self.mapping_manager.is_mapped(folder.path) else 'Unmapped'
         dialog = DestinationManagerDialog(
             self.root,
             self.mapping_manager.destinations,
-            callback=self._update_stats
+            callback=self._update_stats,
+            mapping_manager=self.mapping_manager
         )
 
     def _map_selected_folder(self) -> None:
