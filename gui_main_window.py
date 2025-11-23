@@ -367,7 +367,11 @@ class MainWindow:
         middle_frame = ttk.Frame(paned)
         paned.add(middle_frame, weight=2)
 
-        self.mapping_panel = MappingPanel(middle_frame, on_delete_callback=self._on_mapping_deleted)
+        self.mapping_panel = MappingPanel(
+            middle_frame,
+            on_delete_callback=self._on_mapping_deleted,
+            on_select_callback=self._on_mapping_selected
+        )
         self.mapping_panel.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
     def _create_statusbar(self) -> None:
@@ -540,6 +544,32 @@ class MainWindow:
         folder_info = self._get_selected_folder()
         if folder_info:
             self._display_folder_details(folder_info)
+            # If folder is mapped, also select it in the mapping panel
+            if self.mapping_manager.is_mapped(folder_info.path):
+                self.mapping_panel.select_by_source_path(folder_info.path)
+
+    def _on_mapping_selected(self, source_path: str) -> None:
+        """
+        Handle selection of a mapping in the mapping panel.
+        Selects the corresponding folder in the source tree.
+
+        Args:
+            source_path: The source path of the selected mapping
+        """
+        # Find and select the corresponding item in the source tree
+        for item_id, folder in self.item_to_folder_info.items():
+            if folder.path == source_path:
+                # Expand parents to make visible
+                parent = self.tree.parent(item_id)
+                while parent:
+                    self.tree.item(parent, open=True)
+                    parent = self.tree.parent(parent)
+                # Select and scroll to item
+                self.tree.selection_set(item_id)
+                self.tree.see(item_id)
+                # Display details
+                self._display_folder_details(folder)
+                break
 
     def _get_selected_folder(self) -> Optional[FolderInfo]:
         """
@@ -566,7 +596,13 @@ class MainWindow:
         """
         self.details_text.delete('1.0', tk.END)
 
-        details = f"""Path: {folder.path}
+        # Get status
+        status = self._get_folder_status(folder)
+        is_mapped = self.mapping_manager.is_mapped(folder.path)
+
+        details = f"""=== SOURCE FOLDER ===
+
+Path: {folder.path}
 
 Name: {folder.name}
 
@@ -579,7 +615,31 @@ Last Modified: {folder.last_modified.strftime('%Y-%m-%d %H:%M:%S')}
 
 Depth Level: {folder.depth}
 
-Status: {'Mapped' if self.mapping_manager.is_mapped(folder.path) else 'Unmapped'}
+Status: {status}
+"""
+
+        # Add mapping details if mapped
+        if is_mapped:
+            mapping = self.mapping_manager.get_mapping(folder.path)
+            if mapping:
+                dest = mapping.destination
+                details += f"""
+=== MAPPING DETAILS ===
+
+Destination Site: {dest.site_url}
+
+Library: {dest.library_name}
+"""
+                if dest.subfolder:
+                    details += f"""
+Subfolder: {dest.subfolder}
+"""
+                details += f"""
+Full Destination: {dest.get_full_destination()}
+"""
+                if mapping.notes:
+                    details += f"""
+Notes: {mapping.notes}
 """
 
         self.details_text.insert('1.0', details)
@@ -765,6 +825,10 @@ Status: {'Mapped' if self.mapping_manager.is_mapped(folder.path) else 'Unmapped'
 
             # Update displays
             self._update_mappings_display()
+
+            # Refresh source tree to update mapped/unmapped status
+            if self.current_scan_results:
+                self._refresh_view()
 
             self.current_project_file = file_path
             self.statusbar.config(text=f"Loaded project: {file_path}")
