@@ -439,14 +439,19 @@ class QuickMapDialog(tk.Toplevel):
         """
         super().__init__(parent)
         self.title("Map Folder")
-        self.geometry("600x300")
+        self.geometry("600x350")
         self.transient(parent)
+        self.minsize(400, 250)
 
         self.destinations = destinations
         self.source_path = source_path
         self.result = None
 
         self._create_widgets()
+
+        # Keyboard shortcuts
+        self.bind('<Return>', lambda e: self._map())
+        self.bind('<Escape>', lambda e: self.destroy())
 
         # Center on parent
         self.grab_set()
@@ -495,10 +500,14 @@ class QuickMapDialog(tk.Toplevel):
 
         self.dest_listbox = tk.Listbox(
             list_frame,
-            yscrollcommand=scrollbar.set
+            yscrollcommand=scrollbar.set,
+            height=8
         )
         self.dest_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.dest_listbox.yview)
+
+        # Double-click to map
+        self.dest_listbox.bind('<Double-Button-1>', lambda e: self._map())
 
         # Populate
         for dest in self.destinations:
@@ -511,12 +520,12 @@ class QuickMapDialog(tk.Toplevel):
         if self.destinations:
             self.dest_listbox.selection_set(0)
 
-        # Buttons
+        # Buttons frame at bottom
         btn_frame = ttk.Frame(main_frame)
-        btn_frame.pack(pady=10)
+        btn_frame.pack(side=tk.BOTTOM, pady=10)
 
-        ttk.Button(btn_frame, text="Map", command=self._map).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Map", command=self._map, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=self.destroy, width=10).pack(side=tk.LEFT, padx=5)
 
     def _map(self) -> None:
         """Handle map button."""
