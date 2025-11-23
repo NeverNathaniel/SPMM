@@ -501,23 +501,31 @@ class MainWindow:
             # Format values
             size_str = format_size(folder.total_size)
             modified_str = folder.last_modified.strftime('%Y-%m-%d %H:%M')
-            status = 'Mapped' if self.mapping_manager.is_mapped(folder.path) else 'Unmapped'
 
-            # Insert item
+            # Insert item with temporary status (will be updated after all items added)
             item_id = self.tree.insert(
                 parent,
                 'end',
                 text=folder.name,
-                values=(folder.file_count, size_str, modified_str, status),
-                tags=(status.lower(),)
+                values=(folder.file_count, size_str, modified_str, 'Unmapped'),
+                tags=('unmapped',)
             )
 
             path_to_item[folder.path] = item_id
             self.item_to_folder_info[item_id] = folder  # Store item ID to folder mapping
 
+        # Now update all statuses (requires all items to be in place for partial detection)
+        for item_id, folder in self.item_to_folder_info.items():
+            status = self._get_folder_status(folder)
+            current_values = self.tree.item(item_id, 'values')
+            if current_values:
+                new_values = (current_values[0], current_values[1], current_values[2], status)
+                self.tree.item(item_id, values=new_values, tags=(status.lower(),))
+
         # Configure tags for visual feedback
         self.tree.tag_configure('mapped', foreground='green')
         self.tree.tag_configure('unmapped', foreground='black')
+        self.tree.tag_configure('partial', foreground='#CC7700')  # Orange for partial
 
         # Update stats
         self._update_stats()
@@ -577,10 +585,116 @@ Status: {'Mapped' if self.mapping_manager.is_mapped(folder.path) else 'Unmapped'
         self.details_text.insert('1.0', details)
 
     def _refresh_view(self) -> None:
-        """Refresh the current view."""
+        """Refresh the current view, preserving expanded state."""
         if self.current_scan_results:
+            # Save expanded state before refresh
+            expanded_paths = self._get_expanded_paths()
+
             self._populate_tree(self.current_scan_results)
+
+            # Restore expanded state
+            self._restore_expanded_paths(expanded_paths)
+
             self.statusbar.config(text="View refreshed")
+
+    def _get_expanded_paths(self) -> set:
+        """Get set of paths for all expanded tree items."""
+        expanded = set()
+
+        def collect_expanded(item):
+            if self.tree.item(item, 'open'):
+                # Get the path for this item
+                if item in self.item_to_folder_info:
+                    expanded.add(self.item_to_folder_info[item].path)
+            for child in self.tree.get_children(item):
+                collect_expanded(child)
+
+        for item in self.tree.get_children():
+            collect_expanded(item)
+
+        return expanded
+
+    def _restore_expanded_paths(self, expanded_paths: set) -> None:
+        """Restore expanded state for items matching given paths."""
+        # Build path to item mapping
+        path_to_item = {}
+        for item_id, folder in self.item_to_folder_info.items():
+            path_to_item[folder.path] = item_id
+
+        # Expand items that were previously expanded
+        for path in expanded_paths:
+            if path in path_to_item:
+                self.tree.item(path_to_item[path], open=True)
+
+    def _update_single_item_status(self, folder_path: str) -> None:
+        """Update the status column for a single item without rebuilding tree."""
+        # Find the item for this path
+        for item_id, folder in self.item_to_folder_info.items():
+            if folder.path == folder_path:
+                status = self._get_folder_status(folder)
+                current_values = self.tree.item(item_id, 'values')
+                if current_values:
+                    new_values = (current_values[0], current_values[1], current_values[2], status)
+                    self.tree.item(item_id, values=new_values, tags=(status.lower().replace(' ', '_'),))
+                break
+
+        # Also update parent folders' status (for partial mapping)
+        self._update_parent_statuses(folder_path)
+
+    def _get_folder_status(self, folder: FolderInfo) -> str:
+        """
+        Get the mapping status for a folder.
+
+        Returns 'Mapped', 'Unmapped', or 'Partial' based on folder and children state.
+        """
+        is_self_mapped = self.mapping_manager.is_mapped(folder.path)
+
+        # Check children's mapping status
+        children_mapped = 0
+        children_unmapped = 0
+        children_partial = 0
+
+        for other_folder in self.path_to_folder_info.values():
+            # Check if this is a direct or indirect child
+            if other_folder.path != folder.path and other_folder.path.startswith(folder.path + os.sep):
+                if self.mapping_manager.is_mapped(other_folder.path):
+                    children_mapped += 1
+                else:
+                    children_unmapped += 1
+
+        # Determine status
+        if is_self_mapped:
+            return 'Mapped'
+        elif children_mapped > 0 and children_unmapped > 0:
+            return 'Partial'
+        elif children_mapped > 0:
+            return 'Partial'  # Has mapped children but self is not mapped
+        else:
+            return 'Unmapped'
+
+    def _update_parent_statuses(self, folder_path: str) -> None:
+        """Update the status of all parent folders for a given path."""
+        # Get the folder info to find parents
+        if folder_path not in self.path_to_folder_info:
+            return
+
+        folder = self.path_to_folder_info[folder_path]
+        current_path = folder.parent_path
+
+        while current_path and current_path in self.path_to_folder_info:
+            parent_folder = self.path_to_folder_info[current_path]
+
+            # Find the tree item for this parent
+            for item_id, f in self.item_to_folder_info.items():
+                if f.path == current_path:
+                    status = self._get_folder_status(parent_folder)
+                    current_values = self.tree.item(item_id, 'values')
+                    if current_values:
+                        new_values = (current_values[0], current_values[1], current_values[2], status)
+                        self.tree.item(item_id, values=new_values, tags=(status.lower(),))
+                    break
+
+            current_path = parent_folder.parent_path
 
     def _clear_cache(self) -> None:
         """Clear the scan cache."""

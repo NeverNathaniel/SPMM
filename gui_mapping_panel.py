@@ -2,18 +2,18 @@
 GUI Mapping Panel Module
 
 This module provides the UI components for displaying and managing
-folder-to-SharePoint mappings.
+folder-to-SharePoint mappings in a hierarchical tree format.
 """
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-from typing import List, Optional, Callable
+from typing import List, Optional, Callable, Dict
 from mapping_manager import FolderMapping, SharePointDestination
 from file_scanner import format_size
 
 
 class MappingPanel(ttk.Frame):
-    """Panel for displaying current mappings."""
+    """Panel for displaying current mappings in a tree format grouped by destination."""
 
     def __init__(self, parent, on_delete_callback: Optional[Callable] = None):
         """
@@ -26,6 +26,7 @@ class MappingPanel(ttk.Frame):
         super().__init__(parent)
         self.on_delete_callback = on_delete_callback
         self.mappings: List[FolderMapping] = []
+        self.dest_to_mappings: Dict[str, List[FolderMapping]] = {}
 
         self._create_widgets()
 
@@ -64,7 +65,19 @@ class MappingPanel(ttk.Frame):
             command=self._clear_all
         ).pack(side=tk.LEFT, padx=2)
 
-        # Tree view for mappings
+        ttk.Button(
+            toolbar,
+            text="Expand All",
+            command=self._expand_all
+        ).pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(
+            toolbar,
+            text="Collapse All",
+            command=self._collapse_all
+        ).pack(side=tk.LEFT, padx=2)
+
+        # Tree view for mappings (hierarchical)
         tree_frame = ttk.Frame(self)
         tree_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
@@ -74,8 +87,8 @@ class MappingPanel(ttk.Frame):
 
         self.tree = ttk.Treeview(
             tree_frame,
-            columns=('Source', 'Destination', 'Files', 'Size'),
-            show='headings',
+            columns=('Files', 'Size'),
+            show='tree headings',
             yscrollcommand=vsb.set,
             xscrollcommand=hsb.set
         )
@@ -92,21 +105,24 @@ class MappingPanel(ttk.Frame):
         tree_frame.grid_columnconfigure(0, weight=1)
 
         # Configure columns
-        self.tree.heading('Source', text='Source Path')
-        self.tree.heading('Destination', text='SharePoint Destination')
+        self.tree.heading('#0', text='Destination / Source', anchor=tk.W)
         self.tree.heading('Files', text='Files')
         self.tree.heading('Size', text='Size')
 
-        self.tree.column('Source', width=300, minwidth=150)
-        self.tree.column('Destination', width=300, minwidth=150)
+        self.tree.column('#0', width=400, minwidth=200)
         self.tree.column('Files', width=80, minwidth=60)
         self.tree.column('Size', width=100, minwidth=80)
+
+        # Configure tags for visual distinction
+        self.tree.tag_configure('destination', font=('Arial', 9, 'bold'), foreground='#0066CC')
+        self.tree.tag_configure('source', foreground='black')
 
         # Context menu
         self.context_menu = tk.Menu(self, tearoff=0)
         self.context_menu.add_command(label="Delete Mapping", command=self._delete_selected)
 
         self.tree.bind("<Button-3>", self._show_context_menu)
+        self.tree.bind("<Double-Button-1>", self._on_double_click)
 
     def _show_context_menu(self, event) -> None:
         """Show context menu on right-click."""
@@ -114,11 +130,22 @@ class MappingPanel(ttk.Frame):
         item = self.tree.identify_row(event.y)
         if item:
             self.tree.selection_set(item)
-            self.context_menu.post(event.x_root, event.y_root)
+            # Only show context menu for source items (not destinations)
+            if self.tree.parent(item):  # Has parent = is a source item
+                self.context_menu.post(event.x_root, event.y_root)
+
+    def _on_double_click(self, event) -> None:
+        """Handle double-click to expand/collapse destination nodes."""
+        item = self.tree.identify_row(event.y)
+        if item and not self.tree.parent(item):  # Top-level = destination
+            if self.tree.item(item, 'open'):
+                self.tree.item(item, open=False)
+            else:
+                self.tree.item(item, open=True)
 
     def update_mappings(self, mappings: List[FolderMapping]) -> None:
         """
-        Update the displayed mappings.
+        Update the displayed mappings in tree format.
 
         Args:
             mappings: List of FolderMapping objects
@@ -129,24 +156,59 @@ class MappingPanel(ttk.Frame):
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        # Add mappings
+        # Group mappings by destination
+        self.dest_to_mappings = {}
         for mapping in mappings:
-            dest_str = mapping.destination.get_full_destination()
-            size_str = format_size(mapping.total_size_bytes)
+            dest_key = mapping.destination.get_full_destination()
+            if dest_key not in self.dest_to_mappings:
+                self.dest_to_mappings[dest_key] = []
+            self.dest_to_mappings[dest_key].append(mapping)
 
-            self.tree.insert(
+        # Build tree
+        for dest_key, dest_mappings in sorted(self.dest_to_mappings.items()):
+            # Calculate totals for destination
+            total_files = sum(m.file_count for m in dest_mappings)
+            total_size = sum(m.total_size_bytes for m in dest_mappings)
+
+            # Insert destination node
+            dest_item = self.tree.insert(
                 '',
                 'end',
-                values=(
-                    mapping.source_path,
-                    dest_str,
-                    mapping.file_count,
-                    size_str
-                )
+                text=f"📁 {dest_key}",
+                values=(total_files, format_size(total_size)),
+                tags=('destination',),
+                open=True  # Expand by default
             )
 
+            # Insert source folders under destination
+            for mapping in sorted(dest_mappings, key=lambda m: m.source_path):
+                size_str = format_size(mapping.total_size_bytes)
+                # Show just the folder name, with full path as tooltip
+                folder_name = mapping.source_path.split('/')[-1] or mapping.source_path.split('\\')[-1] or mapping.source_path
+
+                self.tree.insert(
+                    dest_item,
+                    'end',
+                    text=f"  📄 {folder_name}",
+                    values=(mapping.file_count, size_str),
+                    tags=('source',)
+                )
+
         # Update count
-        self.count_label.config(text=f"({len(mappings)} mappings)")
+        dest_count = len(self.dest_to_mappings)
+        self.count_label.config(
+            text=f"({len(mappings)} mappings to {dest_count} destination{'s' if dest_count != 1 else ''})"
+        )
+
+    def _expand_all(self) -> None:
+        """Expand all destination nodes."""
+        for item in self.tree.get_children():
+            self.tree.item(item, open=True)
+
+    def _collapse_all(self) -> None:
+        """Collapse all destination nodes."""
+        for item in self.tree.get_children():
+            self.tree.item(item, open=False)
 
     def _delete_selected(self) -> None:
         """Delete selected mapping."""
@@ -155,20 +217,44 @@ class MappingPanel(ttk.Frame):
             messagebox.showwarning("No Selection", "Please select a mapping to delete.")
             return
 
-        # Get selected item index
         item = selection[0]
-        index = self.tree.index(item)
 
-        if index < len(self.mappings):
-            mapping = self.mappings[index]
+        # Check if it's a destination (parent) or source (child)
+        parent = self.tree.parent(item)
+        if not parent:
+            # It's a destination - offer to delete all mappings to this destination
+            dest_text = self.tree.item(item, 'text').replace('📁 ', '')
+            children = self.tree.get_children(item)
 
-            # Confirm
             if messagebox.askyesno(
-                "Confirm Delete",
-                f"Delete mapping:\n{mapping.source_path}\n→\n{mapping.destination.get_full_destination()}?"
+                "Delete All Mappings",
+                f"Delete all {len(children)} mappings to:\n{dest_text}?"
             ):
-                if self.on_delete_callback:
-                    self.on_delete_callback(mapping.source_path)
+                # Get all source paths for this destination
+                if dest_text in self.dest_to_mappings:
+                    for mapping in self.dest_to_mappings[dest_text]:
+                        if self.on_delete_callback:
+                            self.on_delete_callback(mapping.source_path)
+            return
+
+        # It's a source item - find the mapping
+        dest_item = parent
+        dest_text = self.tree.item(dest_item, 'text').replace('📁 ', '')
+        source_text = self.tree.item(item, 'text').replace('  📄 ', '')
+
+        # Find the matching mapping
+        if dest_text in self.dest_to_mappings:
+            for mapping in self.dest_to_mappings[dest_text]:
+                # Match by folder name (end of path)
+                folder_name = mapping.source_path.split('/')[-1] or mapping.source_path.split('\\')[-1] or mapping.source_path
+                if folder_name == source_text:
+                    if messagebox.askyesno(
+                        "Confirm Delete",
+                        f"Delete mapping:\n{mapping.source_path}\n→\n{dest_text}?"
+                    ):
+                        if self.on_delete_callback:
+                            self.on_delete_callback(mapping.source_path)
+                    return
 
     def _clear_all(self) -> None:
         """Clear all mappings."""
