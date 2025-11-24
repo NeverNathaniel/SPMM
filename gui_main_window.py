@@ -201,6 +201,7 @@ class MainWindow:
         export_menu.add_separator()
         export_menu.add_command(label="Export to CSV...", command=self._export_csv)
         export_menu.add_command(label="Generate Summary Report...", command=self._generate_report)
+        export_menu.add_command(label="Generate HTML Report...", command=self._generate_html_report)
         export_menu.add_separator()
         export_menu.add_command(label="Export Unmapped List...", command=self._export_unmapped)
         export_menu.add_command(label="Export CSV Template...", command=self._export_template)
@@ -1012,6 +1013,60 @@ Notes: {mapping.notes}
             messagebox.showerror(
                 "Report Failed",
                 "Failed to generate summary report."
+            )
+
+    def _generate_html_report(self) -> None:
+        """Generate professionally styled HTML executive report."""
+        if not self.current_scan_results:
+            messagebox.showwarning(
+                "No Scan Data",
+                "Please scan a folder first."
+            )
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Generate HTML Report",
+            filetypes=[("HTML Files", "*.html"), ("All Files", "*.*")],
+            defaultextension=".html",
+            initialfile="migration_report.html"
+        )
+
+        if not file_path:
+            return
+
+        # Get scan path for report header
+        scan_path = ""
+        if self.current_scan_results:
+            # Try to find common root from results
+            paths = [f.path for f in self.current_scan_results]
+            if paths:
+                scan_path = os.path.commonpath(paths) if len(paths) > 1 else os.path.dirname(paths[0])
+
+        if self.export_manager.generate_html_report(
+            self.mapping_manager,
+            self.current_scan_results,
+            self.filtered_results if self.filtered_results else self.current_scan_results,
+            self.archived_results,
+            file_path,
+            scan_path
+        ):
+            messagebox.showinfo(
+                "Report Generated",
+                f"HTML report saved to:\n{file_path}"
+            )
+            self.statusbar.config(text=f"HTML report saved to {file_path}")
+
+            # Offer to open in browser
+            if messagebox.askyesno(
+                "Open Report",
+                "Would you like to open the report in your browser?"
+            ):
+                import webbrowser
+                webbrowser.open(f"file://{os.path.abspath(file_path)}")
+        else:
+            messagebox.showerror(
+                "Report Failed",
+                "Failed to generate HTML report."
             )
 
     def _export_unmapped(self) -> None:
