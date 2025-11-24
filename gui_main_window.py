@@ -144,6 +144,9 @@ class MainWindow:
         self.archived_results: List[FolderInfo] = []
         self.path_to_folder_info = {}  # Map paths to FolderInfo objects
         self.item_to_folder_info = {}  # Map tree item IDs to FolderInfo
+        self.path_to_tree_item = {}  # Map paths to tree item IDs
+        self.children_map = {}  # Track tree relationships for status calculations
+        self.folder_status_cache = {}
         self.mapping_panel = None
         self.stats_panel = None
         self.archive_destination: Optional[SharePointDestination] = None
@@ -492,19 +495,21 @@ class MainWindow:
             return
 
         # Build tree structure
-        # Map paths to tree item IDs and FolderInfo
-        path_to_item = {}
         self.path_to_folder_info = {}
         self.item_to_folder_info = {}  # Map tree item IDs to FolderInfo
+        self.path_to_tree_item = {}
+        self.children_map = {}
 
         for folder in folders:
             # Store folder info
             self.path_to_folder_info[folder.path] = folder
+            self.children_map.setdefault(folder.path, [])
 
             # Determine parent
             parent = ''
-            if folder.parent_path and folder.parent_path in path_to_item:
-                parent = path_to_item[folder.parent_path]
+            if folder.parent_path and folder.parent_path in self.path_to_tree_item:
+                parent = self.path_to_tree_item[folder.parent_path]
+                self.children_map.setdefault(folder.parent_path, []).append(folder.path)
 
             # Format values
             size_str = format_size(folder.total_size)
@@ -519,12 +524,13 @@ class MainWindow:
                 tags=('unmapped',)
             )
 
-            path_to_item[folder.path] = item_id
+            self.path_to_tree_item[folder.path] = item_id
             self.item_to_folder_info[item_id] = folder  # Store item ID to folder mapping
 
-        # Now update all statuses (requires all items to be in place for partial detection)
+        # Rebuild cached statuses and update the UI without re-walking the entire tree repeatedly
+        self._rebuild_status_cache()
         for item_id, folder in self.item_to_folder_info.items():
-            status = self._get_folder_status(folder)
+            status = self.folder_status_cache.get(folder.path, 'Unmapped')
             current_values = self.tree.item(item_id, 'values')
             if current_values:
                 new_values = (current_values[0], current_values[1], current_values[2], status)
@@ -537,6 +543,38 @@ class MainWindow:
 
         # Update stats
         self._update_stats()
+
+    def _rebuild_status_cache(self) -> None:
+        """Recalculate mapping statuses for every folder in the tree."""
+        self.folder_status_cache = {}
+
+        def compute_status(path: str) -> str:
+            if path in self.folder_status_cache:
+                return self.folder_status_cache[path]
+
+            is_mapped = self.mapping_manager.is_mapped(path)
+            if is_mapped:
+                status = 'Mapped'
+            else:
+                has_mapped_children = False
+                has_partial_children = False
+                for child_path in self.children_map.get(path, []):
+                    child_status = compute_status(child_path)
+                    if child_status == 'Mapped':
+                        has_mapped_children = True
+                    elif child_status == 'Partial':
+                        has_partial_children = True
+
+                if has_mapped_children or has_partial_children:
+                    status = 'Partial'
+                else:
+                    status = 'Unmapped'
+
+            self.folder_status_cache[path] = status
+            return status
+
+        for folder_path in self.path_to_folder_info:
+            compute_status(folder_path)
 
     def _on_folder_select(self, event) -> None:
         """
@@ -552,7 +590,7 @@ class MainWindow:
         if folder_info:
             self._display_folder_details(folder_info)
             # If folder is mapped, also select it in the mapping panel
-            if self.mapping_manager.is_mapped(folder_info.path):
+            if self.mapping_panel and self.mapping_manager.is_mapped(folder_info.path):
                 self._updating_selection = True
                 try:
                     self.mapping_panel.select_by_source_path(folder_info.path)
@@ -570,22 +608,21 @@ class MainWindow:
         if self._updating_selection:
             return
 
+        tree_item = self.path_to_tree_item.get(source_path)
+        folder = self.path_to_folder_info.get(source_path)
+        if not tree_item or not folder:
+            return
+
         self._updating_selection = True
         try:
-            # Find and select the corresponding item in the source tree
-            for item_id, folder in self.item_to_folder_info.items():
-                if folder.path == source_path:
-                    # Expand parents to make visible
-                    parent = self.tree.parent(item_id)
-                    while parent:
-                        self.tree.item(parent, open=True)
-                        parent = self.tree.parent(parent)
-                    # Select and scroll to item
-                    self.tree.selection_set(item_id)
-                    self.tree.see(item_id)
-                    # Display details
-                    self._display_folder_details(folder)
-                    break
+            parent = self.tree.parent(tree_item)
+            while parent:
+                self.tree.item(parent, open=True)
+                parent = self.tree.parent(parent)
+
+            self.tree.selection_set(tree_item)
+            self.tree.see(tree_item)
+            self._display_folder_details(folder)
         finally:
             self._updating_selection = False
 
@@ -725,30 +762,13 @@ Notes: {mapping.notes}
 
         Returns 'Mapped', 'Unmapped', or 'Partial' based on folder and children state.
         """
-        is_self_mapped = self.mapping_manager.is_mapped(folder.path)
-
-        # Check children's mapping status
-        children_mapped = 0
-        children_unmapped = 0
-        children_partial = 0
-
-        for other_folder in self.path_to_folder_info.values():
-            # Check if this is a direct or indirect child
-            if other_folder.path != folder.path and other_folder.path.startswith(folder.path + os.sep):
-                if self.mapping_manager.is_mapped(other_folder.path):
-                    children_mapped += 1
-                else:
-                    children_unmapped += 1
-
-        # Determine status
-        if is_self_mapped:
-            return 'Mapped'
-        elif children_mapped > 0 and children_unmapped > 0:
-            return 'Partial'
-        elif children_mapped > 0:
-            return 'Partial'  # Has mapped children but self is not mapped
-        else:
+        if not folder:
             return 'Unmapped'
+
+        if folder.path not in self.folder_status_cache:
+            self._rebuild_status_cache()
+
+        return self.folder_status_cache.get(folder.path, 'Unmapped')
 
     def _update_parent_statuses(self, folder_path: str) -> None:
         """Update the status of all parent folders for a given path."""
@@ -1315,9 +1335,10 @@ Notes: {mapping.notes}
             selection = listbox.curselection()
             if selection:
                 self.archive_destination = self.mapping_manager.destinations[selection[0]]
-                self.statusbar.config(
-                    text=f"Archive destination set: {self.archive_destination.get_full_destination()}"
-                )
+                if self.archive_destination:
+                    self.statusbar.config(
+                        text=f"Archive destination set: {self.archive_destination.get_full_destination()}"
+                    )
                 dialog.destroy()
 
         btn_frame = ttk.Frame(dialog)
