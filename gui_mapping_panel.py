@@ -39,12 +39,12 @@ class MappingPanel(ttk.Frame):
         """Create panel widgets."""
         # Title
         title_frame = ttk.Frame(self)
-        title_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 5))
+        title_frame.pack(side=tk.TOP, fill=tk.X, pady=(5, 5))
 
         ttk.Label(
             title_frame,
             text="Current Mappings",
-            font=('Arial', 10, 'bold')
+            font=('Segoe UI', 10, 'bold')
         ).pack(side=tk.LEFT)
 
         self.count_label = ttk.Label(
