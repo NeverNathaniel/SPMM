@@ -115,48 +115,53 @@ class FileScanner:
             return
 
         try:
-            entries = os.listdir(current_path)
+            # Use scandir instead of listdir + isdir for performance
+            with os.scandir(current_path) as it:
+                for entry in it:
+                    if self._cancel_scan:
+                        return
+
+                    try:
+                        if entry.is_dir():
+                            entry_path = entry.path
+
+                            # Get folder info
+                            folder_info = self._get_folder_info(
+                                entry_path,
+                                current_depth + 1,
+                                current_path
+                            )
+                            folders.append(folder_info)
+
+                            # Progress callback
+                            if progress_callback:
+                                result = progress_callback(entry_path, len(folders))
+                                # If callback returns False, cancel the scan
+                                if result is False:
+                                    self._cancel_scan = True
+                                    return
+
+                            # Recurse into subdirectory
+                            self._scan_recursive(
+                                entry_path,
+                                current_depth + 1,
+                                max_depth,
+                                folders,
+                                progress_callback
+                            )
+                    except PermissionError:
+                        logger.warning(f"Permission denied accessing entry: {entry.name}")
+                        continue
+                    except OSError as e:
+                        logger.warning(f"Error accessing entry {entry.name}: {str(e)}")
+                        continue
+
         except PermissionError:
             logger.warning(f"Permission denied: {current_path}")
             return
         except Exception as e:
             logger.warning(f"Error reading {current_path}: {str(e)}")
             return
-
-        for entry in entries:
-            if self._cancel_scan:
-                return
-
-            entry_path = os.path.join(current_path, entry)
-
-            # Skip if not a directory
-            if not os.path.isdir(entry_path):
-                continue
-
-            # Get folder info
-            folder_info = self._get_folder_info(
-                entry_path,
-                current_depth + 1,
-                current_path
-            )
-            folders.append(folder_info)
-
-            # Progress callback
-            if progress_callback:
-                result = progress_callback(entry_path, len(folders))
-                # If callback returns False, cancel the scan
-                if result is False:
-                    self._cancel_scan = True
-                    return
-
-            # Recurse into subdirectory
-            self._scan_recursive(
-                entry_path,
-                current_depth + 1,
-                max_depth,
-                folders,
-                progress_callback
-            )
 
     def _get_folder_info(
         self,

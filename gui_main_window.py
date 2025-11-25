@@ -13,9 +13,10 @@ from typing import Optional, List
 from datetime import datetime
 
 from file_scanner import FileScanner, FolderInfo, format_size
-from mapping_manager import MappingManager, SharePointDestination
+from mapping_manager import MappingManager, SharePointDestination, FolderMapping
 from gui_destination_manager import DestinationManagerDialog, QuickMapDialog
 from gui_mapping_panel import MappingPanel, MappingStatsPanel
+from gui_destination_tree import DestinationTree
 from filter_engine import FilterEngine, FilterConfig, create_default_config
 from gui_filters import FilterConfigDialog
 from export_manager import ExportManager
@@ -153,11 +154,37 @@ class MainWindow:
         self.current_project_file: Optional[str] = None
         self._updating_selection = False  # Guard against cross-selection recursion
 
+        # Configure Styles
+        self._configure_styles()
+
         # Setup UI
         self._create_menu()
         self._create_toolbar()
         self._create_main_content()
         self._create_statusbar()
+
+        # Force UI update to prevent layout glitches
+        self.root.update_idletasks()
+
+    def _configure_styles(self) -> None:
+        """Configure ttk styles and theme."""
+        style = ttk.Style()
+
+        # Use 'clam' theme if available for a cleaner look
+        if 'clam' in style.theme_names():
+            style.theme_use('clam')
+
+        # Configure fonts and padding
+        default_font = ('Segoe UI', 9) if os.name == 'nt' else ('Helvetica', 10)
+        bold_font = ('Segoe UI', 9, 'bold') if os.name == 'nt' else ('Helvetica', 10, 'bold')
+
+        style.configure('.', font=default_font)
+        style.configure('Treeview', rowheight=25)
+        style.configure('Treeview.Heading', font=bold_font)
+        style.configure('TButton', padding=5)
+        style.configure('TLabel', padding=2)
+        style.configure('TLabelframe', padding=5)
+        style.configure('TLabelframe.Label', font=bold_font)
 
     def _create_menu(self) -> None:
         """Create the menu bar."""
@@ -218,6 +245,9 @@ class MainWindow:
         """Create the toolbar."""
         toolbar = ttk.Frame(self.root, padding="5")
         toolbar.pack(side=tk.TOP, fill=tk.X)
+
+        # Ensure toolbar propagates geometry correctly immediately
+        toolbar.pack_propagate(True)
 
         # Scan button
         scan_btn = ttk.Button(
@@ -370,16 +400,31 @@ class MainWindow:
         self.tree_context_menu.add_command(label="Remove Mapping", command=self._remove_mapping_for_selected)
         self.tree.bind("<Button-3>", self._show_tree_context_menu)
 
-        # Middle pane - Mappings panel
+        # Middle pane - Tabbed view (Mappings List | Destination Tree)
         middle_frame = ttk.Frame(paned)
         paned.add(middle_frame, weight=2)
 
+        # Create Notebook
+        self.notebook = ttk.Notebook(middle_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Tab 1: Mapping List
         self.mapping_panel = MappingPanel(
-            middle_frame,
+            self.notebook,
             on_delete_callback=self._on_mapping_deleted,
             on_select_callback=self._on_mapping_selected
         )
-        self.mapping_panel.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.notebook.add(self.mapping_panel, text="Mapping List")
+
+        # Tab 2: Destination Preview
+        self.destination_tree = DestinationTree(
+            self.notebook,
+            on_select_callback=self._on_destination_selected
+        )
+        self.notebook.add(self.destination_tree, text="Destination Preview")
+
+        # Bind tab change to refresh views if needed
+        self.notebook.bind('<<NotebookTabChanged>>', self._on_tab_changed)
 
     def _create_statusbar(self) -> None:
         """Create the status bar."""
@@ -488,6 +533,8 @@ class MainWindow:
             folders: List of FolderInfo objects
         """
         # Clear existing items
+        # Note: detach() clears the view but keeps items in memory.
+        # Since we are rebuilding, we must use delete().
         for item in self.tree.get_children():
             self.tree.delete(item)
 
@@ -500,7 +547,11 @@ class MainWindow:
         self.path_to_tree_item = {}
         self.children_map = {}
 
-        for folder in folders:
+        # Sort folders by depth so parents are processed before children
+        # This ensures parent items exist in tree when inserting children
+        sorted_folders = sorted(folders, key=lambda f: f.depth)
+
+        for folder in sorted_folders:
             # Store folder info
             self.path_to_folder_info[folder.path] = folder
             self.children_map.setdefault(folder.path, [])
@@ -615,6 +666,7 @@ class MainWindow:
 
         self._updating_selection = True
         try:
+            # Update Source Tree
             parent = self.tree.parent(tree_item)
             while parent:
                 self.tree.item(parent, open=True)
@@ -625,6 +677,84 @@ class MainWindow:
             self._display_folder_details(folder)
         finally:
             self._updating_selection = False
+
+    def _on_destination_selected(self, mappings: List[FolderMapping], node_data: dict) -> None:
+        """
+        Handle selection in Destination Tree.
+
+        Args:
+            mappings: List of mappings associated with the selected node
+            node_data: Dict containing node info (type, url, etc.)
+        """
+        if self._updating_selection:
+            return
+
+        # Display details for the destination
+        self._display_destination_details(node_data, mappings)
+
+        # If it's a single mapping leaf node, highlight source
+        if node_data.get('type') == 'mapping' and len(mappings) == 1:
+            self._updating_selection = True
+            try:
+                source_path = mappings[0].source_path
+                tree_item = self.path_to_tree_item.get(source_path)
+                if tree_item:
+                    parent = self.tree.parent(tree_item)
+                    while parent:
+                        self.tree.item(parent, open=True)
+                        parent = self.tree.parent(parent)
+                    self.tree.selection_set(tree_item)
+                    self.tree.see(tree_item)
+            finally:
+                self._updating_selection = False
+
+    def _display_destination_details(self, node_data: dict, mappings: List[FolderMapping]) -> None:
+        """Display details about selected destination node."""
+        self.details_text.delete('1.0', tk.END)
+
+        node_type = node_data.get('type', 'Unknown')
+        total_size = sum(m.total_size_bytes for m in mappings)
+        file_count = sum(m.file_count for m in mappings)
+
+        details = f"""=== DESTINATION DETAILS ===
+
+Type: {node_type.title()}
+"""
+        if 'url' in node_data:
+            details += f"Site: {node_data['url']}\n"
+        if 'lib' in node_data:
+            details += f"Library: {node_data['lib']}\n"
+        if 'key' in node_data:
+            details += f"Path: {node_data['key']}\n"
+
+        details += f"""
+--- Statistics ---
+Total Mapped Folders: {len(mappings)}
+Total Files: {file_count}
+Total Size: {format_size(total_size)}
+"""
+
+        # If it's a specific mapping, show source info
+        if node_type == 'mapping' and mappings:
+            m = mappings[0]
+            details += f"""
+--- Source Info ---
+Source Path: {m.source_path}
+Notes: {m.notes}
+"""
+
+        self.details_text.insert('1.0', details)
+
+    def _on_tab_changed(self, event) -> None:
+        """Handle tab change to update views."""
+        selected_tab = self.notebook.select()
+        tab_text = self.notebook.tab(selected_tab, "text")
+
+        if tab_text == "Destination Preview":
+            # Refresh destination tree
+            mappings = self.mapping_manager.get_all_mappings()
+            self.destination_tree.update_from_mappings(mappings)
+            self._update_stats()
 
     def _get_selected_folder(self) -> Optional[FolderInfo]:
         """
