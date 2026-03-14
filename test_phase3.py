@@ -227,7 +227,6 @@ def test_phase3():
     print("Phase 3 Testing Complete - All Tests Passed!")
     print("=" * 60)
 
-    return 0
 
 if __name__ == '__main__':
     try:

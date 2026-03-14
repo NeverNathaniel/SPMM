@@ -49,17 +49,24 @@ All development phases have been completed:
 ## Quick Start
 
 ### Requirements
-- Python 3.10 or higher
-- Tkinter (usually included with Python)
+- Python 3.12 or higher
+- Tkinter (included with Python 3.12)
+- A display (or virtual display via Xvfb for headless environments)
 
 ### Installation
 ```bash
-pip install -r requirements.txt
+pip3.12 install -r requirements.txt
 ```
 
 ### Running the Application
 ```bash
-python main.py
+python3.12 main.py
+```
+
+On Linux/headless environments, start a virtual display first:
+```bash
+Xvfb :99 -screen 0 1024x768x24 &
+DISPLAY=:99 python3.12 main.py
 ```
 
 ## User Guide
@@ -158,21 +165,27 @@ Project files store:
 
 ## Testing
 
+Run all tests with pytest:
+```bash
+python3.12 -m pytest -v
+```
+
+Or run individual test files directly:
 ```bash
 # Test file scanner (Phase 1)
-python test_scanner.py
+python3.12 test_scanner.py
 
 # Test mapping functionality (Phase 2)
-python test_phase2.py
+python3.12 test_phase2.py
 
 # Test filtering and rules (Phase 3)
-python test_phase3.py
+python3.12 test_phase3.py
 
 # Test export and persistence (Phase 4)
-python test_phase4.py
+python3.12 test_phase4.py
 
 # Test validation (Phase 5)
-python test_phase5.py
+python3.12 -m pytest test_phase5.py -v
 ```
 
 ## Project Structure
