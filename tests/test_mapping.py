@@ -68,5 +68,6 @@ def test_validators(mapping_manager, dest1):
     assert result.error_count > 0
     # Should find PathTooLong error (specifically Destination path exceeds SharePoint limit)
     # ValidationResult has a single 'issues' list and counts
-    errors = result.get_issues_by_severity(result.issues[0].severity.__class__.ERROR)
+    from validators import ValidationSeverity
+    errors = result.get_issues_by_severity(ValidationSeverity.ERROR)
     assert any("limit" in e.message.lower() for e in errors)
