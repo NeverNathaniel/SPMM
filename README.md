@@ -11,62 +11,27 @@ A standalone GUI application for visually mapping file share folders to SharePoi
 - **Multiple Export Formats**: CSV for migration scripts, summary reports, unmapped lists
 - **Project Persistence**: Save/load project files to resume work
 
-## Status: Phase 5 Complete
-
-All development phases have been completed:
-
-### Phase 1: Basic Structure
-- File share scanner with metadata collection
-- GUI with folder tree view
-- Display file count, size, and modification dates
-
-### Phase 2: Mapping Functionality
-- Destination management UI (add/edit/remove SharePoint destinations)
-- Mapping interface with 3-pane layout
-- Quick map dialog for folder-to-destination mapping
-- Visual feedback (green for mapped, black for unmapped)
-
-### Phase 3: Filtering and Rules
-- Date-based filtering (files not modified in X days)
-- Auto-route old files to archive destination
-- Pattern exclusion rules (wildcards supported)
-- Size-based filtering (min/max folder size)
-- File count filtering (min files, skip empty folders)
-
-### Phase 4: Export and Persistence
-- Export mappings to CSV format
-- Generate comprehensive summary reports
-- Save/load projects (.spmm format)
-- Project state persistence (JSON)
-
-### Phase 5: Validation and Polish
-- Pre-export validation checks
-- Validation report UI with severity filtering
-- SharePoint limit validation (path length, item count)
-- Warning dialogs for issues
-- User documentation
-
 ## Quick Start
 
 ### Requirements
-- Python 3.12 or higher
-- Tkinter (included with Python 3.12)
+- Python 3.10 or higher
+- Tkinter (included with standard Python installs)
 - A display (or virtual display via Xvfb for headless environments)
 
 ### Installation
 ```bash
-pip3.12 install -r requirements.txt
+pip install -r requirements.txt
 ```
 
 ### Running the Application
 ```bash
-python3.12 main.py
+python3 main.py
 ```
 
 On Linux/headless environments, start a virtual display first:
 ```bash
 Xvfb :99 -screen 0 1024x768x24 &
-DISPLAY=:99 python3.12 main.py
+DISPLAY=:99 python3 main.py
 ```
 
 ## User Guide
@@ -167,25 +132,13 @@ Project files store:
 
 Run all tests with pytest:
 ```bash
-python3.12 -m pytest -v
+python3 -m pytest -v
 ```
 
 Or run individual test files directly:
 ```bash
-# Test file scanner (Phase 1)
-python3.12 test_scanner.py
-
-# Test mapping functionality (Phase 2)
-python3.12 test_phase2.py
-
-# Test filtering and rules (Phase 3)
-python3.12 test_phase3.py
-
-# Test export and persistence (Phase 4)
-python3.12 test_phase4.py
-
-# Test validation (Phase 5)
-python3.12 -m pytest test_phase5.py -v
+python3 -m pytest tests/test_scanner.py -v
+python3 -m pytest test_phase5.py -v
 ```
 
 ## Project Structure
@@ -201,6 +154,7 @@ SPMM/
 ├── validators.py                # Pre-export validation logic
 ├── gui_main_window.py           # Main window GUI
 ├── gui_destination_manager.py   # Destination management dialogs
+├── gui_destination_tree.py      # Read-only destination structure visualization
 ├── gui_mapping_panel.py         # Mapping display and stats panels
 ├── gui_filters.py               # Filter configuration UI
 ├── gui_validation_report.py     # Validation results UI
