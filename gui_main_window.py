@@ -1056,7 +1056,7 @@ Notes: {mapping.notes}
         messagebox.showinfo(
             "About",
             "File Share to SharePoint Migration Mapper\n\n"
-            "Version 1.0.0 - Phase 4\n\n"
+            "Version 1.0.0\n\n"
             "A tool for mapping file share folders to SharePoint libraries."
         )
 

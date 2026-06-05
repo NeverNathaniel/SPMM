@@ -15,9 +15,6 @@ def dest1():
     )
 
 def test_add_destination(mapping_manager, dest1):
-    # Fix: add_destination expects components, not the object itself
-    # But if we want to add an existing object, we might need to change the manager
-    # Or just use the components from dest1
     mapping_manager.add_destination(dest1.site_url, dest1.library_name, dest1.subfolder)
     assert len(mapping_manager.destinations) == 1
     assert mapping_manager.destinations[0] == dest1

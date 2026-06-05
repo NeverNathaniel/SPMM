@@ -14,16 +14,22 @@ venv/
 env/
 ENV/
 
+# Testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+*.code-workspace
 
 # Logs
 *.log
-spmm.log
 
 # Test data
 test_share/
@@ -32,7 +38,6 @@ test_share/
 .DS_Store
 Thumbs.db
 
-# Project specific
+# Generated output (not source)
 *.csv
 *.json
-!requirements.txt

@@ -1,17 +1,13 @@
-#!/usr/bin/env python3.12
+#!/usr/bin/env python3
 """
-File Share to SharePoint Migration Mapping Tool
+SPMM — File Share to SharePoint Migration Mapper
 
 Main entry point for the application.
-
-Author: Auto-generated
-Version: 1.0.0 (Phase 1)
 """
 
 import tkinter as tk
 import sys
 import logging
-from pathlib import Path
 
 from gui_main_window import MainWindow
 
@@ -57,11 +53,6 @@ def main() -> None:
     try:
         # Create main window
         root = tk.Tk()
-
-        # Set window icon (if icon file exists)
-        # icon_path = Path(__file__).parent / 'icon.ico'
-        # if icon_path.exists():
-        #     root.iconbitmap(str(icon_path))
 
         # Create and run application
         app = MainWindow(root)

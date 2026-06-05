@@ -158,10 +158,10 @@ SPMM/
 ├── gui_mapping_panel.py         # Mapping display and stats panels
 ├── gui_filters.py               # Filter configuration UI
 ├── gui_validation_report.py     # Validation results UI
-├── test_*.py                    # Test scripts
-├── test_share/                  # Test folder structure
+├── tests/                       # Pytest test suite
+├── test_phase*.py               # Integration test scripts
 ├── requirements.txt             # Dependencies
-├── DEVELOPMENT_WORKFLOW.md      # Development instructions
+├── CONTRIBUTING.md              # Contribution guidelines
 └── README.md                    # This file
 ```
 
