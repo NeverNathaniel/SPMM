@@ -122,7 +122,9 @@ class FileScanner:
                         return
 
                     try:
-                        if entry.is_dir():
+                        # Do not follow symlinks: avoids infinite loops on
+                        # symlink cycles and prevents escaping the scanned tree.
+                        if entry.is_dir(follow_symlinks=False):
                             entry_path = entry.path
 
                             # Get folder info

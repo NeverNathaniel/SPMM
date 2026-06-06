@@ -4,10 +4,10 @@
 Create a standalone GUI application that allows users to visually map file share folders to SharePoint libraries. The tool should scan file shares, display the structure, and let users drag-and-drop or manually map folders to destination SharePoint sites/libraries. Output should be a CSV mapping file usable for migration scripts.
 
 ## Technology Stack
-- **Language**: Python 3.10+
-- **GUI Framework**: PyQt5 or Tkinter (Tkinter preferred for simpler deployment)
+- **Backend**: Python 3.10+, FastAPI, uvicorn
+- **Frontend**: React (Vite), React Flow, Axios, Lucide React
 - **File Operations**: os, pathlib
-- **Data Export**: csv, pandas
+- **Data Export**: csv
 - **SharePoint**: No live connection needed, manual destination entry
 
 ## Core Requirements
@@ -30,20 +30,17 @@ Create a standalone GUI application that allows users to visually map file share
 - Simple list view of destinations
 - Validate URL format (basic validation)
 
-### 3. Mapping Interface
-- **Left pane**: Source folder tree
-- **Right pane**: Destination libraries list
-- **Middle pane**: Current mappings display
-- Mapping methods:
-  - Select source folder, select destination, click "Map"
-  - Right-click context menu on source folders
-  - Bulk mapping for multiple folders to same destination
+### 3. Mapping Interface (React Flow canvas)
+- **Left side**: source-folder nodes (created by a scan)
+- **Right side**: SharePoint destination nodes (created via "Add Destination")
+- Mapping method:
+  - Drag a connection from a source folder's handle to a destination's handle;
+    the edge is persisted via `POST /api/mappings`
 - Visual indicators:
-  - Mapped folders (green icon/highlight)
-  - Unmapped folders (default)
-  - Folders with multiple mappings (warning icon)
-- Ability to edit/delete mappings
-- Preview of what will be mapped
+  - Source-folder nodes show file count and size
+  - Destination nodes show library name and site path
+  - Animated edges represent active mappings
+- Mappings are removed by deleting the edge / via `DELETE /api/mappings`
 
 ### 4. Filtering and Rules
 - Filter old files to separate archive library:
@@ -81,10 +78,11 @@ Create a standalone GUI application that allows users to visually map file share
 
 ### Phase 1: Basic Structure
 **Files to create:**
-- `main.py` - Application entry point
+- `main.py` - Application entry point (uvicorn server)
+- `api.py` - FastAPI REST endpoints
 - `file_scanner.py` - File share scanning logic
-- `gui_main_window.py` - Main window layout
 - `mapping_manager.py` - Handles mapping data structure
+- `frontend/` - React application with React Flow
 - `requirements.txt` - Dependencies
 
 **Deliverables:**
@@ -100,8 +98,9 @@ Create a standalone GUI application that allows users to visually map file share
 
 ### Phase 2: Mapping Functionality
 **Files to create/update:**
-- `gui_mapping_panel.py` - Mapping interface components
-- `destination_manager.py` - Manage SharePoint destinations
+- `frontend/src/App.jsx` - React Flow canvas and mapping interactions
+- `frontend/src/components/CustomNodes.jsx` - source/destination node renderers
+- `api.py` - `/api/destinations` and `/api/mappings` endpoints
 
 **Deliverables:**
 - Add destination libraries manually
@@ -118,7 +117,7 @@ Create a standalone GUI application that allows users to visually map file share
 ### Phase 3: Filtering and Rules
 **Files to create/update:**
 - `filter_engine.py` - Filtering logic
-- `gui_filters.py` - Filter configuration UI
+- `api.py` - `/api/filters` (GET/PUT) endpoints for filter configuration
 
 **Deliverables:**
 - Date-based filtering UI
@@ -152,7 +151,8 @@ Create a standalone GUI application that allows users to visually map file share
 ### Phase 5: Validation and Polish
 **Files to create/update:**
 - `validators.py` - Validation logic
-- `gui_validation_report.py` - Validation results display
+- `api.py` - `/api/validate` endpoint
+- `frontend/src/App.jsx` - validation trigger and results display
 
 **Deliverables:**
 - Pre-export validation checks
@@ -217,17 +217,15 @@ Create `tests/` directory with:
 
 ## Deployment
 
-### Packaging
-- Use PyInstaller to create standalone executable
-- Single file executable for Windows
-- Include README and sample CSV
-- Version numbering (start at 1.0.0)
+### Development
+- Backend: `python3 main.py` (uvicorn on port 8000)
+- Frontend: `cd frontend && npm run dev` (Vite on port 5173)
 
-### Distribution
-- Provide .exe for Windows
+### Production
+- Build frontend: `cd frontend && npm run build`
+- Serve via FastAPI static files or a reverse proxy
 - Include requirements.txt for Python users
-- Sample mapping CSV template
-- Quick start guide
+- Version numbering (start at 2.0.0)
 
 ## Sample Test Data Structure
 Create test folder structure for development:
@@ -251,7 +249,7 @@ test_share/
 - Successfully scans file shares with 10,000+ items
 - Maps folders to destinations in under 5 clicks
 - Exports valid CSV usable by PowerShell scripts
-- Runs on Windows without Python installation (after packaging)
+- Backend runs anywhere Python 3.10+ is available; frontend builds to static assets via Vite
 - Save/load works reliably
 - User can complete mapping workflow in under 30 minutes for medium complexity share
 

@@ -4,6 +4,7 @@
 import sys
 from mapping_manager import MappingManager, SharePointDestination
 from file_scanner import FileScanner
+from test_helpers import create_test_share
 
 def test_phase2():
     """Test Phase 2 functionality."""
@@ -46,7 +47,7 @@ def test_phase2():
     print("\n2. Testing File Scanner Integration")
     print("-" * 60)
 
-    test_path = '/home/user/SPMM/test_share'
+    test_path, cleanup = create_test_share()
     folders = scanner.scan_folder(test_path)
     print(f"Scanned: {test_path}")
     print(f"Found {len(folders)} folders")

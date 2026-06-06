@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from file_scanner import FileScanner, FolderInfo
 from filter_engine import FilterEngine, FilterConfig, COMMON_EXCLUSION_PATTERNS
 from filter_engine import create_default_config, create_conservative_config
+from test_helpers import create_test_share
 
 def test_phase3():
     """Test Phase 3 functionality."""
@@ -20,7 +21,7 @@ def test_phase3():
     print("\n1. Scanning Test Folder")
     print("-" * 60)
 
-    test_path = '/home/user/SPMM/test_share'
+    test_path, cleanup = create_test_share()
     folders = scanner.scan_folder(test_path)
     print(f"Scanned: {test_path}")
     print(f"Found {len(folders)} folders")

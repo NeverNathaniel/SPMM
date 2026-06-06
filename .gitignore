@@ -10,6 +10,7 @@ build/
 *.egg
 
 # Virtual environments
+.venv/
 venv/
 env/
 ENV/
@@ -32,7 +33,12 @@ test_share/
 .DS_Store
 Thumbs.db
 
-# Project specific
+# Project files (SPMM save format)
+*.spmm
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Export artifacts
 *.csv
-*.json
-!requirements.txt

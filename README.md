@@ -1,119 +1,73 @@
 # File Share to SharePoint Migration Mapping Tool (SPMM)
 
-A standalone GUI application for visually mapping file share folders to SharePoint libraries, generating CSV mapping files for use with PowerShell migration scripts.
+A web application for visually mapping file share folders to SharePoint libraries using an interactive mindmap interface, generating CSV mapping files for use with PowerShell migration scripts.
 
 ## Features
 
 - **File Share Scanner**: Scan local or network file shares (UNC paths supported)
-- **Visual Mapping Interface**: 3-pane layout for source folders, destinations, and mappings
+- **Mindmap Mapping Interface**: Drag-and-connect nodes in a React Flow canvas
+- **Folder Browser**: Navigate your filesystem from within the web UI
 - **Filtering Rules**: Date-based filtering, pattern exclusion, size/count thresholds
 - **Pre-Export Validation**: Checks for SharePoint limits, path lengths, and potential issues
 - **Multiple Export Formats**: CSV for migration scripts, summary reports, unmapped lists
 - **Project Persistence**: Save/load project files to resume work
 
-## Status: Phase 5 Complete
-
-All development phases have been completed:
-
-### Phase 1: Basic Structure
-- File share scanner with metadata collection
-- GUI with folder tree view
-- Display file count, size, and modification dates
-
-### Phase 2: Mapping Functionality
-- Destination management UI (add/edit/remove SharePoint destinations)
-- Mapping interface with 3-pane layout
-- Quick map dialog for folder-to-destination mapping
-- Visual feedback (green for mapped, black for unmapped)
-
-### Phase 3: Filtering and Rules
-- Date-based filtering (files not modified in X days)
-- Auto-route old files to archive destination
-- Pattern exclusion rules (wildcards supported)
-- Size-based filtering (min/max folder size)
-- File count filtering (min files, skip empty folders)
-
-### Phase 4: Export and Persistence
-- Export mappings to CSV format
-- Generate comprehensive summary reports
-- Save/load projects (.spmm format)
-- Project state persistence (JSON)
-
-### Phase 5: Validation and Polish
-- Pre-export validation checks
-- Validation report UI with severity filtering
-- SharePoint limit validation (path length, item count)
-- Warning dialogs for issues
-- User documentation
-
 ## Quick Start
 
 ### Requirements
-- Python 3.12 or higher
-- Tkinter (included with Python 3.12)
-- A display (or virtual display via Xvfb for headless environments)
+- Python 3.10+
+- Node.js 18+
 
 ### Installation
+
 ```bash
-pip3.12 install -r requirements.txt
+# Backend
+pip install -r requirements.txt
+
+# Frontend
+cd frontend && npm install
 ```
 
-### Running the Application
+### Running
+
+Start both the backend API and frontend dev server:
+
 ```bash
-python3.12 main.py
+# Terminal 1 — Backend (http://127.0.0.1:8000)
+python3 main.py
+
+# Terminal 2 — Frontend (http://localhost:5173)
+cd frontend && npm run dev
 ```
 
-On Linux/headless environments, start a virtual display first:
-```bash
-Xvfb :99 -screen 0 1024x768x24 &
-DISPLAY=:99 python3.12 main.py
-```
+Then open **http://localhost:5173** in your browser.
 
 ## User Guide
 
 ### 1. Scan a File Share
 
-1. Enter a folder path in the path field or click **Browse**
-2. Click **Scan** to scan the folder structure
-3. The folder tree will populate with metadata (file count, size, last modified)
+1. Enter a folder path in the header bar, or click the **Browse** (folder icon) button
+2. Navigate your filesystem in the folder picker modal and click **Select Current Folder**
+3. Click **Scan** — source folder nodes will appear on the left side of the canvas
 
 ### 2. Add SharePoint Destinations
 
-1. Go to **Mapping > Manage Destinations**
-2. Click **Add New** to add a destination
-3. Enter:
-   - SharePoint Site URL (e.g., `https://contoso.sharepoint.com/sites/HR`)
-   - Library Name (e.g., `Documents`)
-   - Subfolder (optional, e.g., `Archive/2024`)
+1. Click **Add Destination** in the header
+2. Enter the SharePoint site URL (e.g., `https://contoso.sharepoint.com/sites/HR`)
+3. Enter the library name (e.g., `Documents`)
+4. Destination nodes appear on the right side of the canvas
 
 ### 3. Map Folders to Destinations
 
-- **Method 1**: Select a folder in the tree, right-click, choose **Map to Destination**
-- **Method 2**: Select folder, go to **Mapping > Map Selected Folder**
+- **Drag a connection** from the right handle of any source folder node to the left handle of a destination node
+- An animated edge is created and the mapping is persisted in the backend
 
-Mapped folders will be highlighted in green.
+### 4. Validate & Export
 
-### 4. Apply Filters (Optional)
-
-1. Go to **Filters > Configure Filters**
-2. Configure options:
-   - **Date Threshold**: Archive folders not modified in X days
-   - **Pattern Exclusion**: Exclude folders matching patterns (e.g., `temp`, `*cache*`)
-   - **Size Filters**: Skip folders below/above size thresholds
-   - **File Count**: Skip empty folders or folders with few files
-
-3. Set an archive destination via **Filters > Set Archive Destination**
-4. Apply filters via **Filters > Apply Filters to Scan**
-
-### 5. Validate and Export
-
-1. Go to **Export > Validate Mappings** to check for issues
-2. Review any errors or warnings in the validation report
-3. Go to **Export > Export to CSV** to generate the migration file
+- Click the **Shield icon** to run validation checks
+- Click **Export** to download a CSV mapping file
 
 ## CSV Export Format
-
-The exported CSV contains these columns:
 
 | Column | Description |
 |--------|-------------|
@@ -128,114 +82,78 @@ The exported CSV contains these columns:
 
 ## Validation Checks
 
-The tool validates against:
+- **SharePoint Limits**: Path length (400 chars), items per folder (5,000), file size (250 GB)
+- **Windows Limits**: MAX_PATH (260 chars)
+- **Configuration**: Missing destinations, invalid URLs, unmapped folders, name collisions
 
-- **SharePoint Limits**:
-  - Path length (400 character limit)
-  - Items per folder (5000 item view threshold)
-  - File size limits (250 GB max)
+## API Endpoints
 
-- **Windows Limits**:
-  - MAX_PATH (260 characters)
-
-- **Configuration Issues**:
-  - Missing destinations
-  - Invalid URL formats
-  - Unmapped folders
-  - Folder name collisions at destination
-
-## Project Files
-
-Save your work as a `.spmm` project file via **File > Save Project**.
-
-Project files store:
-- Scan path
-- All destinations
-- All mappings
-- Filter configuration
-- Archive destination
-
-## Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| Enter | Confirm/Apply in dialogs |
-| Escape | Cancel/Close dialogs |
-| Right-click | Context menu on folders |
-
-## Testing
-
-Run all tests with pytest:
-```bash
-python3.12 -m pytest -v
-```
-
-Or run individual test files directly:
-```bash
-# Test file scanner (Phase 1)
-python3.12 test_scanner.py
-
-# Test mapping functionality (Phase 2)
-python3.12 test_phase2.py
-
-# Test filtering and rules (Phase 3)
-python3.12 test_phase3.py
-
-# Test export and persistence (Phase 4)
-python3.12 test_phase4.py
-
-# Test validation (Phase 5)
-python3.12 -m pytest test_phase5.py -v
-```
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/browse?path=~` | List directories for folder picker |
+| POST | `/api/scan` | Scan a folder path |
+| GET/POST/DELETE | `/api/destinations` | CRUD destinations |
+| GET/POST/DELETE | `/api/mappings` | CRUD mappings |
+| GET/PUT | `/api/filters` | Read/update filter config |
+| GET | `/api/statistics` | Get mapping statistics |
+| GET | `/api/validate` | Run validation checks |
+| POST | `/api/export/csv` | Download CSV export |
+| POST | `/api/project/save` | Save project to file |
+| POST | `/api/project/load` | Load project from file |
 
 ## Project Structure
 
 ```
 SPMM/
-├── main.py                      # Application entry point
-├── file_scanner.py              # File share scanning logic
-├── mapping_manager.py           # Mapping data structures
-├── filter_engine.py             # Filtering logic and rules
-├── export_manager.py            # CSV and report export
-├── project_manager.py           # Project save/load
-├── validators.py                # Pre-export validation logic
-├── gui_main_window.py           # Main window GUI
-├── gui_destination_manager.py   # Destination management dialogs
-├── gui_mapping_panel.py         # Mapping display and stats panels
-├── gui_filters.py               # Filter configuration UI
-├── gui_validation_report.py     # Validation results UI
-├── test_*.py                    # Test scripts
-├── test_share/                  # Test folder structure
-├── requirements.txt             # Dependencies
-├── DEVELOPMENT_WORKFLOW.md      # Development instructions
-└── README.md                    # This file
+├── main.py                   # Backend entry point (uvicorn)
+├── api.py                    # FastAPI REST endpoints
+├── file_scanner.py           # File share scanning logic
+├── mapping_manager.py        # Mapping data structures
+├── filter_engine.py          # Filtering logic and rules
+├── export_manager.py         # CSV and report export
+├── project_manager.py        # Project save/load
+├── validators.py             # Pre-export validation logic
+├── test_helpers.py           # Shared test utilities
+├── test_*.py                 # Integration test scripts
+├── tests/                    # Unit tests (pytest)
+├── frontend/                 # React + Vite frontend
+│   ├── src/
+│   │   ├── App.jsx           # Root component with React Flow
+│   │   ├── components/
+│   │   │   ├── CustomNodes.jsx   # Folder & destination nodes
+│   │   │   └── FolderPicker.jsx  # Directory browser modal
+│   │   ├── index.css         # Global dark theme
+│   │   └── main.jsx          # React entry point
+│   ├── package.json
+│   └── index.html
+├── requirements.txt
+└── README.md
 ```
 
-## Troubleshooting
+## Testing
 
-### "Permission denied" errors during scan
-- Ensure you have read access to the file share
-- Try running as administrator for network shares
+```bash
+# Unit tests
+python3 -m pytest tests/ -v
 
-### Slow scanning of large shares
-- Scanning shows progress dialog with cancel option
-- Results are cached - subsequent views are faster
-- Consider filtering to reduce the working set
-
-### Path length warnings
-- SharePoint has a 400 character path limit
-- Consider shorter library/folder names
-- Nested subfolders add to path length
+# Integration tests (all phases)
+python3 test_scanner.py
+python3 test_phase2.py
+python3 test_phase3.py
+python3 test_phase4.py
+python3 -m pytest test_phase5.py -v
+```
 
 ## Version History
 
-- **1.0.0** - Initial release (All phases complete)
-  - File share scanning with metadata
-  - Visual mapping interface
-  - Filtering and archiving rules
-  - CSV export with validation
-  - Project save/load functionality
-  - Pre-export validation checks
+- **2.0.0** - Web application overhaul
+  - Migrated from Tkinter GUI to FastAPI + React
+  - Mindmap-style mapping with React Flow
+  - Folder browser with `/api/browse` endpoint
+  - Dark glassmorphism theme
+  - All existing features (export, validation, filters, project save/load) preserved
+
+- **1.0.0** - Initial release (Tkinter desktop application)
 
 ## License
 

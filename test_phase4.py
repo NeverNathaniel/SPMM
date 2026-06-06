@@ -11,6 +11,7 @@ from mapping_manager import MappingManager, SharePointDestination
 from filter_engine import FilterEngine, create_default_config
 from export_manager import ExportManager
 from project_manager import ProjectManager
+from test_helpers import create_test_share
 
 def test_phase4():
     """Test Phase 4 functionality."""
@@ -29,7 +30,7 @@ def test_phase4():
     print("\n1. Setting Up Test Data")
     print("-" * 60)
 
-    test_path = '/home/user/SPMM/test_share'
+    test_path, cleanup = create_test_share()
     folders = scanner.scan_folder(test_path)
     print(f"Scanned {len(folders)} folders")
 

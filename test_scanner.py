@@ -2,12 +2,13 @@
 """Quick test script for the file scanner."""
 
 from file_scanner import FileScanner, format_size
+from test_helpers import create_test_share
 import sys
 
 def main():
     """Test the scanner with test_share folder."""
     scanner = FileScanner()
-    test_path = '/home/user/SPMM/test_share'
+    test_path, cleanup = create_test_share()
 
     print(f"Scanning: {test_path}")
     print("-" * 60)

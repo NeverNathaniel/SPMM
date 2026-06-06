@@ -17,6 +17,22 @@ from file_scanner import FolderInfo, format_size
 
 logger = logging.getLogger(__name__)
 
+# Characters that trigger formula evaluation in Excel / LibreOffice / Google Sheets
+# when they appear as the first character of a cell. See CWE-1236 (CSV injection).
+_CSV_FORMULA_PREFIXES = ('=', '+', '-', '@', '\t', '\r')
+
+
+def _csv_safe(value):
+    """Neutralise CSV/formula-injection in a single cell value.
+
+    If a string begins with a formula-trigger character, prefix it with a
+    single quote so spreadsheet software treats it as literal text. Non-string
+    values are returned unchanged.
+    """
+    if isinstance(value, str) and value and value[0] in _CSV_FORMULA_PREFIXES:
+        return "'" + value
+    return value
+
 
 class ExportManager:
     """Manages export of mappings to CSV and report generation."""
@@ -60,14 +76,14 @@ class ExportManager:
                 for mapping in mappings:
                     data = mapping.to_dict()
                     row = {
-                        'SourcePath': data['source_path'],
-                        'DestinationSiteURL': data['destination_site_url'],
-                        'DestinationLibrary': data['destination_library'],
-                        'DestinationFolder': data['destination_subfolder'],
+                        'SourcePath': _csv_safe(data['source_path']),
+                        'DestinationSiteURL': _csv_safe(data['destination_site_url']),
+                        'DestinationLibrary': _csv_safe(data['destination_library']),
+                        'DestinationFolder': _csv_safe(data['destination_subfolder']),
                         'FileCount': data['file_count'],
                         'TotalSizeGB': data['total_size_gb'],
-                        'LastModified': data['last_modified'],
-                        'Notes': data['notes']
+                        'LastModified': _csv_safe(data['last_modified']),
+                        'Notes': _csv_safe(data['notes'])
                     }
                     writer.writerow(row)
 

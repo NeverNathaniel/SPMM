@@ -1,9 +1,9 @@
-# File Share to SharePoint Migration Mapping Tool - Dependencies
+# File Share to SharePoint Migration Mapping Tool - Backend dependencies
+# Python 3.10+ required
+#
+# Frontend (React/Vite) dependencies are managed separately in
+# frontend/package.json and installed with `npm install`.
 
-# Core Dependencies
-# No external dependencies needed for Phase 1 - using Tkinter which comes with Python
-
-# For future phases:
-pandas>=2.0.0
-
-# Python version requirement: 3.10+
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.0
