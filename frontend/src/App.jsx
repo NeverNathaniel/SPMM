@@ -12,6 +12,7 @@ import axios from 'axios';
 import { Play, Database, Plus, FolderOpen, Download, ShieldCheck } from 'lucide-react';
 import { FolderNode, DestinationNode } from './components/CustomNodes';
 import FolderPicker from './components/FolderPicker';
+import AddDestinationModal from './components/AddDestinationModal';
 
 // Defined outside the component to avoid React Flow warning #002
 const nodeTypes = {
@@ -20,6 +21,18 @@ const nodeTypes = {
 };
 
 const API_BASE = 'http://127.0.0.1:8000/api';
+
+// Tree layout: deeper folders shift right, each node gets its own row (scan
+// returns folders in parent-before-child / DFS order).
+const COLUMN_WIDTH = 320;
+const ROW_HEIGHT = 120;
+
+// Place destination nodes just to the right of the deepest folder column.
+function computeDestX(allNodes) {
+  const depths = allNodes.filter(n => n.type === 'folder').map(n => n.data.depth || 0);
+  const maxDepth = depths.length ? Math.max(...depths) : 0;
+  return Math.max(900, 40 + (maxDepth + 2) * COLUMN_WIDTH);
+}
 
 function formatSize(bytes) {
   if (!bytes || bytes === 0) return '0 B';
@@ -35,10 +48,15 @@ export default function App() {
   const [scanPath, setScanPath] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
+  const [showDestModal, setShowDestModal] = useState(false);
 
   // Keep a ref to nodes so callbacks never read a stale closure
   const nodesRef = useRef(nodes);
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+
+  // Parent→child folder edges (built on scan). Kept separate so refreshing
+  // mapping edges doesn't wipe the tree connectors.
+  const folderEdgesRef = useRef([]);
 
   const fetchDestinations = useCallback(async () => {
     try {
@@ -47,10 +65,11 @@ export default function App() {
 
       setNodes((nds) => {
         const folderNodes = nds.filter(n => n.type === 'folder');
+        const destX = computeDestX(folderNodes);
         const destNodes = dests.map((d, i) => ({
           id: `dest-${d.site_url}-${d.library_name}-${d.subfolder || ''}`,
           type: 'destination',
-          position: { x: 800, y: i * 150 + 50 },
+          position: { x: destX, y: i * 150 + 40 },
           data: d
         }));
         return [...folderNodes, ...destNodes];
@@ -60,25 +79,28 @@ export default function App() {
     }
   }, []);
 
-  // Build mapping edges, but only emit edges whose source AND target nodes
-  // currently exist on the canvas — otherwise React Flow silently drops
-  // dangling edges. Pass the freshly-built node list after a scan so the
-  // restored edges resolve against the new folder nodes.
+  // Build mapping edges (folder→destination), but only emit edges whose
+  // source AND target nodes currently exist — otherwise React Flow silently
+  // drops dangling edges. Merge with the folder hierarchy edges so the tree
+  // connectors survive a mapping refresh. Pass the freshly-built node list
+  // after a scan so restored edges resolve against the new folder nodes.
   const fetchMappings = useCallback(async (availableNodes) => {
     try {
       const res = await axios.get(`${API_BASE}/mappings`);
       const mappings = res.data;
       const nodeIds = new Set((availableNodes || nodesRef.current).map(n => n.id));
 
-      const newEdges = mappings
+      const mappingEdges = mappings
         .map(m => ({
           id: `e-${m.source_path}-${m.destination_site_url}`,
           source: `folder-${m.source_path}`,
+          sourceHandle: 'out',
           target: `dest-${m.destination_site_url}-${m.destination_library}-${m.destination_subfolder || ''}`,
+          targetHandle: 'a',
           animated: true,
         }))
         .filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
-      setEdges(newEdges);
+      setEdges([...folderEdgesRef.current, ...mappingEdges]);
     } catch (e) {
       console.error("Failed to fetch mappings", e);
     }
@@ -91,14 +113,36 @@ export default function App() {
       const res = await axios.post(`${API_BASE}/scan`, { path });
       const folders = res.data.folders;
 
+      // Tree layout: x by depth, y by DFS order.
       const newFolderNodes = folders.map((f, i) => ({
         id: `folder-${f.path}`,
         type: 'folder',
-        position: { x: 50, y: i * 100 + 50 },
+        position: { x: 40 + (f.depth || 0) * COLUMN_WIDTH, y: i * ROW_HEIGHT + 40 },
         data: { ...f, size_formatted: formatSize(f.total_size) }
       }));
 
-      const destNodes = nodesRef.current.filter(n => n.type === 'destination');
+      // Parent→child connectors (gray, dashed, non-animated) — distinct from
+      // the animated folder→destination mapping edges.
+      const folderIds = new Set(newFolderNodes.map(n => n.id));
+      folderEdgesRef.current = folders
+        .filter(f => f.parent_path && folderIds.has(`folder-${f.parent_path}`))
+        .map(f => ({
+          id: `h-${f.path}`,
+          source: `folder-${f.parent_path}`,
+          sourceHandle: 'out',
+          target: `folder-${f.path}`,
+          targetHandle: 'in',
+          animated: false,
+          selectable: false,
+          style: { stroke: 'var(--text-muted)', strokeDasharray: '4 4' },
+        }));
+
+      // Keep destinations to the right of the (possibly deeper) tree.
+      const destX = computeDestX(newFolderNodes);
+      const destNodes = nodesRef.current
+        .filter(n => n.type === 'destination')
+        .map((n, i) => ({ ...n, position: { x: destX, y: i * 150 + 40 } }));
+
       const allNodes = [...newFolderNodes, ...destNodes];
       nodesRef.current = allNodes;
       setNodes(allNodes);
@@ -156,30 +200,9 @@ export default function App() {
     }
   }, []);
 
-  const addDestination = useCallback(async () => {
-    const url = prompt("Enter SharePoint Site URL (e.g., https://contoso.sharepoint.com/sites/HR):");
-    if (!url) return;
-    try {
-      // Validate before sending so a malformed URL never reaches the canvas.
-      new URL(url);
-    } catch {
-      alert("Please enter a valid absolute URL, including https://");
-      return;
-    }
-    const library = prompt("Enter Library Name (e.g., Documents):");
-    if (!library) return;
-
-    try {
-      await axios.post(`${API_BASE}/destinations`, {
-        site_url: url,
-        library_name: library,
-        subfolder: null
-      });
-      fetchDestinations();
-    } catch {
-      alert("Failed to add destination");
-    }
-  }, [fetchDestinations]);
+  // Opens a modal form. (window.prompt() is blocked in sandboxed preview
+  // iframes, which is why the old prompt-based flow silently did nothing.)
+  const addDestination = useCallback(() => setShowDestModal(true), []);
 
   const handleFolderSelect = useCallback((path) => {
     setScanPath(path);
@@ -221,13 +244,20 @@ export default function App() {
   return (
     <div className="app-container">
       {showPicker && (
-        <FolderPicker 
-          onSelect={handleFolderSelect} 
-          onClose={() => setShowPicker(false)} 
+        <FolderPicker
+          onSelect={handleFolderSelect}
+          onClose={() => setShowPicker(false)}
           initialPath={scanPath || '~'}
         />
       )}
-      
+
+      {showDestModal && (
+        <AddDestinationModal
+          onClose={() => setShowDestModal(false)}
+          onCreated={fetchDestinations}
+        />
+      )}
+
       <header className="app-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
           <div style={{ background: 'var(--accent-gradient)', padding: '8px', borderRadius: '8px' }}>

@@ -130,6 +130,31 @@ def test_browse_invalid_path(client):
 
 
 # --------------------------------------------------------------------------
+# Folder file listing (node expand view)
+# --------------------------------------------------------------------------
+def test_files_lists_names(client):
+    path, cleanup = create_test_share()
+    try:
+        # Department_Finance/Reports_2020 is created with 3 files by the helper.
+        res = client.get("/api/files", params={"path": f"{path}/Department_Finance/Reports_2020"})
+        assert res.status_code == 200
+        body = res.json()
+        assert body["total"] == 3
+        assert len(body["files"]) == 3
+        assert body["truncated"] is False
+        assert all(isinstance(n, str) for n in body["files"])
+        # sorted case-insensitively
+        assert body["files"] == sorted(body["files"], key=str.lower)
+    finally:
+        cleanup()
+
+
+def test_files_invalid_path(client):
+    res = client.get("/api/files", params={"path": "/this/does/not/exist/spmm"})
+    assert res.status_code == 400
+
+
+# --------------------------------------------------------------------------
 # Export
 # --------------------------------------------------------------------------
 def test_export_csv_requires_mappings(client):

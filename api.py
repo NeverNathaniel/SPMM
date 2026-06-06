@@ -175,6 +175,40 @@ def scan_folder(req: ScanRequest):
         raise HTTPException(status_code=400, detail="Unable to scan the requested path")
 
 
+@app.get("/api/files")
+def list_files(path: str, limit: int = 1000):
+    """List file names (non-recursive) in a single folder for the node expand view.
+
+    Names are capped at `limit`; `total`/`truncated` let the UI show a
+    "... and N more" line. Same loopback + CORS posture as /api/browse.
+    """
+    try:
+        expanded = os.path.expanduser(path)
+        if not os.path.isabs(expanded):
+            expanded = os.path.abspath(expanded)
+        if not os.path.isdir(expanded):
+            raise HTTPException(status_code=400, detail="Path is not a valid directory")
+
+        names = sorted(
+            (e.name for e in os.scandir(expanded) if e.is_file(follow_symlinks=False)),
+            key=str.lower,
+        )
+        total = len(names)
+        return {
+            "path": expanded,
+            "files": names[:limit],
+            "total": total,
+            "truncated": total > limit,
+        }
+    except HTTPException:
+        raise
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permission denied")
+    except Exception:
+        logger.exception("Failed to list files: %s", path)
+        raise HTTPException(status_code=500, detail="Unable to list files")
+
+
 # ---------------------------------------------------------------------------
 # Destinations
 # ---------------------------------------------------------------------------
