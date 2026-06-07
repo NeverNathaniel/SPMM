@@ -1,9 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import ReactFlow, { 
-  Background, 
-  Controls, 
+import ReactFlow, {
+  Background,
+  Controls,
   MiniMap,
-  addEdge,
   applyNodeChanges,
   applyEdgeChanges
 } from 'reactflow';
@@ -22,14 +21,35 @@ const nodeTypes = {
 
 const API_BASE = 'http://127.0.0.1:8000/api';
 
-// Tree layout: deeper folders shift right, each node gets its own row (scan
-// returns folders in parent-before-child / DFS order).
-const COLUMN_WIDTH = 320;
-const ROW_HEIGHT = 120;
+// Tree layout: deeper folders shift right, each node gets its own row.
+const COLUMN_WIDTH = 300;
+const ROW_HEIGHT = 96;
+
+// Earth-tone palette used for both per-folder default colors and site colors.
+const EARTH_PALETTE = [
+  '#c08552', // clay
+  '#7e8a55', // moss
+  '#b25d3e', // rust
+  '#caa14b', // amber
+  '#6f8a73', // sage
+  '#9d6b4e', // terracotta-brown
+  '#88794a', // olive-tan
+  '#5f7f78', // muted teal-green
+];
+
+// Stable per-folder default color derived from its path.
+function defaultFolderColor(path) {
+  let h = 0;
+  for (let i = 0; i < path.length; i++) h = (h * 31 + path.charCodeAt(i)) >>> 0;
+  return EARTH_PALETTE[h % EARTH_PALETTE.length];
+}
+
+const destKey = (d) => `${d.site_url}-${d.library_name}-${d.subfolder || ''}`;
+const destId = (d) => `dest-${destKey(d)}`;
 
 // Place destination nodes just to the right of the deepest folder column.
-function computeDestX(allNodes) {
-  const depths = allNodes.filter(n => n.type === 'folder').map(n => n.data.depth || 0);
+function computeDestX(folderNodes) {
+  const depths = folderNodes.filter(n => n.type === 'folder').map(n => n.data.depth || 0);
   const maxDepth = depths.length ? Math.max(...depths) : 0;
   return Math.max(900, 40 + (maxDepth + 2) * COLUMN_WIDTH);
 }
@@ -50,61 +70,163 @@ export default function App() {
   const [showPicker, setShowPicker] = useState(false);
   const [showDestModal, setShowDestModal] = useState(false);
 
-  // Keep a ref to nodes so callbacks never read a stale closure
+  // Source data — held in refs for synchronous access inside rebuild().
+  const foldersRef = useRef([]);
+  const destinationsRef = useRef([]);
+  const mappingsRef = useRef([]);
+  const collapsedRef = useRef(new Set());
   const nodesRef = useRef(nodes);
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
 
-  // Parent→child folder edges (built on scan). Kept separate so refreshing
-  // mapping edges doesn't wipe the tree connectors.
-  const folderEdgesRef = useRef([]);
+  const rebuildRef = useRef(null);
+
+  // Toggle a folder's collapsed state, then rebuild the graph.
+  const toggleCollapse = useCallback((path) => {
+    const next = new Set(collapsedRef.current);
+    if (next.has(path)) next.delete(path); else next.add(path);
+    collapsedRef.current = next;
+    rebuildRef.current?.();
+  }, []);
+
+  // Derive nodes + edges from the source data. Preserves dragged positions,
+  // computes colors (folder default, overridden by nearest mapped ancestor's
+  // site color), collapse visibility, and edge styles.
+  const rebuild = useCallback(() => {
+    const folders = foldersRef.current;
+    const dests = destinationsRef.current;
+    const mappings = mappingsRef.current;
+    const collapsed = collapsedRef.current;
+
+    const prevPos = {};
+    nodesRef.current.forEach(n => { prevPos[n.id] = n.position; });
+
+    const byPath = new Map(folders.map(f => [f.path, f]));
+
+    // Site colors by destination order.
+    const siteColor = new Map();
+    dests.forEach((d, i) => siteColor.set(destKey(d), EARTH_PALETTE[i % EARTH_PALETTE.length]));
+
+    // Directly-mapped folder -> site color.
+    const mappedColor = new Map();
+    mappings.forEach(m => {
+      const key = `${m.destination_site_url}-${m.destination_library}-${m.destination_subfolder || ''}`;
+      if (siteColor.has(key)) mappedColor.set(m.source_path, siteColor.get(key));
+    });
+
+    // Effective color = nearest mapped ancestor-or-self's site color, else default.
+    const effColor = (f) => {
+      let cur = f;
+      const guard = new Set();
+      while (cur && !guard.has(cur.path)) {
+        if (mappedColor.has(cur.path)) return mappedColor.get(cur.path);
+        guard.add(cur.path);
+        cur = cur.parent_path ? byPath.get(cur.parent_path) : null;
+      }
+      return defaultFolderColor(f.path);
+    };
+
+    // Child counts (only count children present in the scan set).
+    const childCount = new Map();
+    folders.forEach(f => {
+      if (f.parent_path && byPath.has(f.parent_path)) {
+        childCount.set(f.parent_path, (childCount.get(f.parent_path) || 0) + 1);
+      }
+    });
+
+    // A folder is hidden if any ancestor is collapsed.
+    const isHidden = (f) => {
+      let cur = f.parent_path ? byPath.get(f.parent_path) : null;
+      const guard = new Set();
+      while (cur && !guard.has(cur.path)) {
+        if (collapsed.has(cur.path)) return true;
+        guard.add(cur.path);
+        cur = cur.parent_path ? byPath.get(cur.parent_path) : null;
+      }
+      return false;
+    };
+
+    const folderNodes = folders.map((f, i) => ({
+      id: `folder-${f.path}`,
+      type: 'folder',
+      hidden: isHidden(f),
+      position: prevPos[`folder-${f.path}`] || { x: 40 + (f.depth || 0) * COLUMN_WIDTH, y: i * ROW_HEIGHT + 40 },
+      data: {
+        ...f,
+        size_formatted: formatSize(f.total_size),
+        color: effColor(f),
+        collapsed: collapsed.has(f.path),
+        childCount: childCount.get(f.path) || 0,
+        onToggleCollapse: toggleCollapse,
+      },
+    }));
+
+    const destX = computeDestX(folderNodes);
+    const destNodes = dests.map((d, i) => ({
+      id: destId(d),
+      type: 'destination',
+      position: prevPos[destId(d)] || { x: destX, y: i * 150 + 40 },
+      data: { ...d, color: EARTH_PALETTE[i % EARTH_PALETTE.length] },
+    }));
+
+    const allNodes = [...folderNodes, ...destNodes];
+    const visible = new Set(allNodes.filter(n => !n.hidden).map(n => n.id));
+
+    // Folder→folder hierarchy edges: angular (smoothstep), dashed, hidden when
+    // either endpoint is collapsed away.
+    const hierEdges = folders
+      .filter(f => f.parent_path && byPath.has(f.parent_path))
+      .map(f => ({
+        id: `h-${f.path}`,
+        source: `folder-${f.parent_path}`,
+        sourceHandle: 'out',
+        target: `folder-${f.path}`,
+        targetHandle: 'in',
+        type: 'smoothstep',
+        animated: false,
+        selectable: false,
+        hidden: !visible.has(`folder-${f.parent_path}`) || !visible.has(`folder-${f.path}`),
+        style: { stroke: 'var(--text-muted)', strokeDasharray: '4 4' },
+      }));
+
+    // Folder→site mapping edges: smooth (default bezier), animated.
+    const mapEdges = mappings
+      .map(m => ({
+        id: `e-${m.source_path}-${m.destination_site_url}`,
+        source: `folder-${m.source_path}`,
+        sourceHandle: 'out',
+        target: `dest-${m.destination_site_url}-${m.destination_library}-${m.destination_subfolder || ''}`,
+        targetHandle: 'a',
+        animated: true,
+      }))
+      .filter(e => visible.has(e.source) && visible.has(e.target));
+
+    nodesRef.current = allNodes;
+    setNodes(allNodes);
+    setEdges([...hierEdges, ...mapEdges]);
+  }, [toggleCollapse]);
+
+  // Keep a ref to the latest rebuild so toggleCollapse can call it.
+  useEffect(() => { rebuildRef.current = rebuild; }, [rebuild]);
 
   const fetchDestinations = useCallback(async () => {
     try {
       const res = await axios.get(`${API_BASE}/destinations`);
-      const dests = res.data;
-
-      setNodes((nds) => {
-        const folderNodes = nds.filter(n => n.type === 'folder');
-        const destX = computeDestX(folderNodes);
-        const destNodes = dests.map((d, i) => ({
-          id: `dest-${d.site_url}-${d.library_name}-${d.subfolder || ''}`,
-          type: 'destination',
-          position: { x: destX, y: i * 150 + 40 },
-          data: d
-        }));
-        return [...folderNodes, ...destNodes];
-      });
+      destinationsRef.current = res.data;
+      rebuild();
     } catch (e) {
       console.error("Failed to fetch destinations", e);
     }
-  }, []);
+  }, [rebuild]);
 
-  // Build mapping edges (folder→destination), but only emit edges whose
-  // source AND target nodes currently exist — otherwise React Flow silently
-  // drops dangling edges. Merge with the folder hierarchy edges so the tree
-  // connectors survive a mapping refresh. Pass the freshly-built node list
-  // after a scan so restored edges resolve against the new folder nodes.
-  const fetchMappings = useCallback(async (availableNodes) => {
+  const fetchMappings = useCallback(async () => {
     try {
       const res = await axios.get(`${API_BASE}/mappings`);
-      const mappings = res.data;
-      const nodeIds = new Set((availableNodes || nodesRef.current).map(n => n.id));
-
-      const mappingEdges = mappings
-        .map(m => ({
-          id: `e-${m.source_path}-${m.destination_site_url}`,
-          source: `folder-${m.source_path}`,
-          sourceHandle: 'out',
-          target: `dest-${m.destination_site_url}-${m.destination_library}-${m.destination_subfolder || ''}`,
-          targetHandle: 'a',
-          animated: true,
-        }))
-        .filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
-      setEdges([...folderEdgesRef.current, ...mappingEdges]);
+      mappingsRef.current = res.data;
+      rebuild();
     } catch (e) {
       console.error("Failed to fetch mappings", e);
     }
-  }, []);
+  }, [rebuild]);
 
   const handleScan = useCallback(async (path = scanPath) => {
     if (!path) return;
@@ -112,51 +234,24 @@ export default function App() {
     try {
       const res = await axios.post(`${API_BASE}/scan`, { path });
       const folders = res.data.folders;
-
-      // Tree layout: x by depth, y by DFS order.
-      const newFolderNodes = folders.map((f, i) => ({
-        id: `folder-${f.path}`,
-        type: 'folder',
-        position: { x: 40 + (f.depth || 0) * COLUMN_WIDTH, y: i * ROW_HEIGHT + 40 },
-        data: { ...f, size_formatted: formatSize(f.total_size) }
-      }));
-
-      // Parent→child connectors (gray, dashed, non-animated) — distinct from
-      // the animated folder→destination mapping edges.
-      const folderIds = new Set(newFolderNodes.map(n => n.id));
-      folderEdgesRef.current = folders
-        .filter(f => f.parent_path && folderIds.has(`folder-${f.parent_path}`))
-        .map(f => ({
-          id: `h-${f.path}`,
-          source: `folder-${f.parent_path}`,
-          sourceHandle: 'out',
-          target: `folder-${f.path}`,
-          targetHandle: 'in',
-          animated: false,
-          selectable: false,
-          style: { stroke: 'var(--text-muted)', strokeDasharray: '4 4' },
-        }));
-
-      // Keep destinations to the right of the (possibly deeper) tree.
-      const destX = computeDestX(newFolderNodes);
-      const destNodes = nodesRef.current
-        .filter(n => n.type === 'destination')
-        .map((n, i) => ({ ...n, position: { x: destX, y: i * 150 + 40 } }));
-
-      const allNodes = [...newFolderNodes, ...destNodes];
-      nodesRef.current = allNodes;
-      setNodes(allNodes);
-
-      // Re-resolve persisted mappings now that the folder nodes exist.
-      await fetchMappings(allNodes);
+      foldersRef.current = folders;
+      // Condensed initial view: collapse everything at depth >= 2 so the tree
+      // is expanded down to depth 2 only.
+      collapsedRef.current = new Set(folders.filter(f => (f.depth || 0) >= 2).map(f => f.path));
+      // Refresh mappings so colors + edges resolve against the new folders.
+      try {
+        const mres = await axios.get(`${API_BASE}/mappings`);
+        mappingsRef.current = mres.data;
+      } catch { /* keep prior mappings */ }
+      rebuild();
     } catch (e) {
       alert("Scan failed: " + (e.response?.data?.detail || e.message));
     } finally {
       setIsScanning(false);
     }
-  }, [scanPath, fetchMappings]);
+  }, [scanPath, rebuild]);
 
-  // Fetch initial data on mount
+  // Fetch initial data on mount.
   useEffect(() => {
     fetchDestinations();
     fetchMappings();
@@ -172,11 +267,12 @@ export default function App() {
     []
   );
 
-  // Uses nodesRef to avoid stale closure
+  // Drag folder→destination to create a mapping. Refetch mappings + rebuild so
+  // the site color propagates down the folder's subtree.
   const onConnect = useCallback(async (params) => {
-    const currentNodes = nodesRef.current;
-    const sourceNode = currentNodes.find(n => n.id === params.source);
-    const targetNode = currentNodes.find(n => n.id === params.target);
+    const cur = nodesRef.current;
+    const sourceNode = cur.find(n => n.id === params.source);
+    const targetNode = cur.find(n => n.id === params.target);
 
     if (sourceNode?.type === 'folder' && targetNode?.type === 'destination') {
       try {
@@ -185,12 +281,14 @@ export default function App() {
           destination: {
             site_url: targetNode.data.site_url,
             library_name: targetNode.data.library_name,
-            subfolder: targetNode.data.subfolder
+            subfolder: targetNode.data.subfolder,
           },
           file_count: sourceNode.data.file_count,
           total_size_bytes: sourceNode.data.total_size,
         });
-        setEdges((eds) => addEdge({ ...params, animated: true }, eds));
+        const mres = await axios.get(`${API_BASE}/mappings`);
+        mappingsRef.current = mres.data;
+        rebuild();
       } catch (e) {
         console.error("Mapping failed", e);
         alert("Failed to create mapping");
@@ -198,7 +296,7 @@ export default function App() {
     } else {
       alert("Please connect a Source Folder to a SharePoint Destination");
     }
-  }, []);
+  }, [rebuild]);
 
   // Opens a modal form. (window.prompt() is blocked in sandboxed preview
   // iframes, which is why the old prompt-based flow silently did nothing.)
@@ -268,10 +366,10 @@ export default function App() {
             <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Migration Mapping Tool</span>
           </div>
         </div>
-        
+
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
           <div className="input-group" style={{ display: 'flex', gap: '8px' }}>
-            <input 
+            <input
               className="input-field"
               id="scan-path-input"
               placeholder="Enter local/UNC path to scan..."
@@ -298,7 +396,7 @@ export default function App() {
           </button>
         </div>
       </header>
-      
+
       <main className="app-content workspace">
         <ReactFlow
           nodes={nodes}
@@ -310,14 +408,10 @@ export default function App() {
           fitView
           attributionPosition="bottom-right"
         >
-          <Background color="#fff" gap={20} size={1} opacity={0.05} />
+          <Background color="#fff" gap={20} size={1} opacity={0.04} />
           <Controls />
-          <MiniMap 
-            nodeColor={(n) => {
-              if (n.type === 'folder') return '#6366f1';
-              if (n.type === 'destination') return '#10b981';
-              return '#eee';
-            }} 
+          <MiniMap
+            nodeColor={(n) => n.data?.color || '#888'}
             style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)' }}
             maskColor="rgba(0,0,0,0.2)"
           />
