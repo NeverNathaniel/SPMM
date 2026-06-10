@@ -40,6 +40,7 @@ src/
     classify.ts      ineligible file/folder detection + hidden/system filtering
     mappingEngine.ts the 7 mapping rules; inherited mappings always derived
     spFolders.ts     immutable SP folder tree ops (add/rename/delete/remap)
+    sitePreview.ts   merged live preview of a site's structure under Documents/
     review.ts        export gating (hard blocks, acknowledgments)
     csv.ts           SPMT CSV generation
     htmlReport.ts    self-contained HTML summary
@@ -53,6 +54,12 @@ tests/               Vitest suites for everything in src/shared and scanDir
 - **Inherited mappings are never stored.** Only explicit mappings persist;
   inheritance is recalculated on every change and on session load, so stale
   chains are impossible (plan rules 1–5).
+- **Live destination preview.** Each site card shows the resulting structure
+  under `Documents/` as mappings change: mapped local folders appear as ⬅
+  chips on the folder receiving their contents, and inherited children render
+  nested in place as read-only "new" rows. Same-named folders merge the way
+  SharePoint merges them; skipped folders drop out exactly as they do from
+  the CSV (`src/shared/sitePreview.ts`).
 - **Session** auto-saves to `%APPDATA%/MigrationMapper/session.json`
   (2s debounce, atomic write). Relaunching shows a resume banner with
   **Start Fresh**.
