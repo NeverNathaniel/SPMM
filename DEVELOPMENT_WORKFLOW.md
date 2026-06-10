@@ -1,231 +1,237 @@
-# File Share to SharePoint Migration Mapping Tool - Development Workflow
+# Migration Mapper - Development Workflow
 
 ## Project Overview
-Create a standalone GUI application that allows users to visually map file share folders to SharePoint libraries. The tool should scan file shares, display the structure, and let users drag-and-drop or manually map folders to destination SharePoint sites/libraries. Output should be a CSV mapping file usable for migration scripts.
+Create a standalone, technician-deployed desktop application that allows end
+users to visually map file share folders to SharePoint Online libraries. The
+tool scans file shares, displays the structure, and lets users drag-and-drop
+or manually map folders to destination SharePoint sites. Output is an
+SPMT-compatible CSV mapping file plus a human-readable HTML summary that the
+technician retrieves and executes — the user never touches SPMT directly.
+
+The application lives in `desktop/` and runs entirely offline on the user's
+machine. No servers, no network services, no live SharePoint connection —
+destinations are entered manually.
 
 ## Technology Stack
-- **Backend**: Python 3.10+, FastAPI, uvicorn
-- **Frontend**: React (Vite), React Flow, Axios, Lucide React
-- **File Operations**: os, pathlib
-- **Data Export**: csv
-- **SharePoint**: No live connection needed, manual destination entry
+- **Shell**: Electron (main process + preload bridge + renderer)
+- **Renderer**: React 18, TypeScript, Tailwind CSS, @dnd-kit/core (drag and
+  drop), Zustand (state)
+- **Build/Test**: Vite + vite-plugin-electron, Vitest, electron-builder
+- **File Operations**: Node `fs` in the main process only, behind IPC; the
+  scan runs in a `worker_threads` worker
+- **Data Export**: SPMT CSV + self-contained HTML summary
+- **Runtime requirements**: Node 20+ to develop; the packaged app has no
+  prerequisites
 
 ## Core Requirements
 
 ### 1. Source File Share Scanner
 - Scan local or network file shares (UNC paths supported)
-- Display folder hierarchy in tree view
-- Show metadata for each folder:
-  - File count
-  - Total size
-  - Last modified date
-  - Depth level
-- Allow filtering by date, size thresholds
-- Cache scan results to avoid re-scanning
+- Recursive directory walk in a worker thread with throttled progress
+  reporting over IPC
+- Display folder hierarchy in a tree view with per-folder metadata:
+  - File count (direct children)
+  - Longest filename (captured at scan time for worst-case URL validation)
+  - Ineligible file/folder name detection (invalid characters, reserved
+    names, leading/trailing dots and spaces, temp/lock files)
+  - Hidden/system entries filtered out
+- Multiple scanned roots can be loaded side by side (configurable
+  accumulate vs clear-on-load behavior)
 
 ### 2. Destination SharePoint Structure
-- Manual entry of SharePoint site URLs
-- Manual entry of library names
-- Allow creating multiple destination libraries
-- Simple list view of destinations
-- Validate URL format (basic validation)
+- Manual entry of SharePoint sites: display name + `/sites/` slug
+  (auto-generated from the name, manually editable)
+- Tenant domain comes from the technician config; sites can be pre-seeded
+  and quick-add presets offered
+- Each site has an implicit `Documents/` root; users create folders beneath
+  it (depth-limited at creation time)
+- Site cards show a **live destination structure preview**: the resulting
+  folder tree under `Documents/` as mappings are added, changed, or removed.
+  Mapped local folders appear as ⬅ source chips on the folder that receives
+  their contents, and their inherited children render nested in place as
+  read-only "new" rows (created by migration, not by the user). Same-named
+  folders merge exactly as SharePoint would merge them; skipped folders drop
+  out of the preview just as they drop out of the CSV.
 
-### 3. Mapping Interface (React Flow canvas)
-- **Left side**: source-folder nodes (created by a scan)
-- **Right side**: SharePoint destination nodes (created via "Add Destination")
-- Mapping method:
-  - Drag a connection from a source folder's handle to a destination's handle;
-    the edge is persisted via `POST /api/mappings`
+### 3. Mapping Interface (two-panel drag and drop)
+- **Left panel**: scanned local directory trees
+- **Right panel**: SharePoint destination site cards
+- Mapping methods:
+  - Drag a local folder onto `Documents/` or any folder in a site card
+  - "Remap to…" context menu opens a modal destination picker
+- The seven mapping rules:
+  1. Explicit mapping always wins
+  2. Unmapped descendants of a mapped folder inherit proportionally
+  3. An explicit child breaks the inheritance chain for its subtree
+  4. Remap replaces (with confirmation)
+  5. Unmap cascades — inherited mappings are **derived, never persisted**,
+     so removing an explicit mapping removes everything that descended from
+     it while preserving explicitly-mapped branches
+  6. Files follow folders — no file-level mappings
+  7. UNC and local source paths are written to the CSV exactly as scanned
 - Visual indicators:
-  - Source-folder nodes show file count and size
-  - Destination nodes show library name and site path
-  - Animated edges represent active mappings
-- Mappings are removed by deleting the edge / via `DELETE /api/mappings`
+  - Folder rows show file count, ineligible-file badge, destination color
+    dot (split indicator when descendants diverge), inline destination label
+  - Site cards reflect incoming structure live (see requirement 2)
+- Inheritance is recalculated from explicit mappings on every change and on
+  session load, so stale chains are impossible
 
-### 4. Filtering and Rules
-- Filter old files to separate archive library:
-  - Set date threshold (e.g., not modified in X years)
-  - Automatically route to "Archive" destination
-- Exclude folders by pattern (temp, cache, etc.)
-- Minimum file count threshold (skip empty folders)
-- Size-based filtering
+### 4. Validation
+- Destination depth: warn at 2, block at 3 (relative to `Documents/`,
+  configurable); blocked folders cannot receive mappings or subfolders
+- Worst-case URL length using the longest filename captured at scan time:
+  warn at 256, block at 400 (configurable)
+- Ineligible file and folder names flagged at scan time
+- Hard blocks (depth, invalid mapped folder names) prevent export;
+  everything else is acknowledge-to-proceed on the review screen
 
 ### 5. Export Functionality
-- Generate CSV with columns:
-  - SourcePath
-  - DestinationSiteURL
-  - DestinationLibrary
-  - DestinationFolder (optional subfolder in library)
-  - FileCount
-  - TotalSizeGB
-  - LastModified
-  - Notes
-- Save/load project files (JSON format) to resume work
-- Generate summary report:
-  - Total folders mapped
-  - Total size to migrate
-  - Unmapped folders list
-  - Archive candidates
+- SPMT-compatible CSV with columns:
+  - Source, SourceDocLib, SourceSubFolder, TargetWeb, TargetDocLib,
+    TargetSubFolder
+- One row per resolved mapping (explicit and inherited — SPMT needs every
+  path spelled out); skipped folders omitted
+- No formula-prefix escaping: the CSV is consumed by SPMT, not spreadsheet
+  software; mangling a path would break the migration
+- Self-contained HTML summary report (totals, per-site breakdown,
+  acknowledged warnings, operator note)
+- Exports written to `%APPDATA%/MigrationMapper/exports/<timestamp>/` or a
+  configured override; exporting does not clear the session
 
-### 6. Validation
-- Check for unmapped folders
-- Warn on duplicate mappings
-- Validate all destination URLs are properly formatted
-- Flag folders exceeding SharePoint limits (5000 items, 400 char paths)
-- Summary of potential issues before export
+### 6. Session Persistence & Technician Config
+- Session auto-saves to `%APPDATA%/MigrationMapper/session.json` (2s
+  debounce, atomic write: temp file + rename)
+- Relaunching shows a resume banner with **Start Fresh**
+- Only explicit mappings, scanned roots, and skip/acknowledge lists are
+  persisted — inherited state is always derived
+- `tech-config.json` ships next to the installed executable (falling back to
+  `resources/`, then userData; project root in dev): tenant domain,
+  pre-seeded sites, thresholds, export path override, optional settings PIN
 
 ## Development Phases
 
-### Phase 1: Basic Structure
-**Files to create:**
-- `main.py` - Application entry point (uvicorn server)
-- `api.py` - FastAPI REST endpoints
-- `file_scanner.py` - File share scanning logic
-- `mapping_manager.py` - Handles mapping data structure
-- `frontend/` - React application with React Flow
-- `requirements.txt` - Dependencies
-
-**Deliverables:**
-- Launch application
-- Scan a test folder
-- Display folder tree in GUI
-- Basic folder metadata display
+### Phase 1: Electron Shell & Scanner
+**Files:**
+- `electron/main.ts` - application window + all IPC handlers
+- `electron/preload.ts` - contextBridge API (the renderer's only OS surface)
+- `electron/scanDir.ts` - core directory walk (testable, shared with worker)
+- `electron/scanWorker.ts` - worker_threads wrapper with throttled progress
+- `src/shared/types.ts` - shared data model
+- `src/shared/classify.ts` - ineligible name detection
 
 **Verification:**
-- Can scan local test folder
-- Tree view shows folders correctly
-- Metadata displays accurately
+- Can scan a local test folder and a UNC path
+- Progress reporting updates during large scans
+- Ineligible names and longest filenames captured correctly
 
-### Phase 2: Mapping Functionality
-**Files to create/update:**
-- `frontend/src/App.jsx` - React Flow canvas and mapping interactions
-- `frontend/src/components/CustomNodes.jsx` - source/destination node renderers
-- `api.py` - `/api/destinations` and `/api/mappings` endpoints
-
-**Deliverables:**
-- Add destination libraries manually
-- Select source folder and map to destination
-- Display current mappings
-- Edit and delete mappings
+### Phase 2: Mapping Engine (pure logic)
+**Files:**
+- `src/shared/mappingEngine.ts` - the seven rules; inherited always derived
+- `src/shared/spFolders.ts` - immutable SP folder tree ops
+  (add/rename/delete/remap-after-rename)
+- `src/shared/slug.ts` - site slug + destination URL helpers
 
 **Verification:**
-- Can add multiple destinations
-- Mappings save correctly
-- Can modify existing mappings
-- Visual feedback on mapped folders
+- Unit tests cover all seven rules, depth/path-length statuses, and folder
+  tree operations
 
-### Phase 3: Filtering and Rules
-**Files to create/update:**
-- `filter_engine.py` - Filtering logic
-- `api.py` - `/api/filters` (GET/PUT) endpoints for filter configuration
-
-**Deliverables:**
-- Date-based filtering UI
-- Pattern exclusion rules
-- Size/count thresholds
-- Auto-route to archive library
-
-**Verification:**
-- Filters apply correctly to scan
-- Archive routing works
-- Can disable/enable filters
-- Filter settings persist
-
-### Phase 4: Export and Persistence
-**Files to create/update:**
-- `export_manager.py` - CSV and report generation
-- `project_manager.py` - Save/load project state
-
-**Deliverables:**
-- Export to CSV
-- Generate summary report
-- Save project as JSON
-- Load existing project
+### Phase 3: Mapping UI
+**Files:**
+- `src/store/useAppStore.ts` - Zustand store + debounced autosave
+- `src/store/useResolved.tsx` - memoised derived state (resolution is
+  O(folders); computed once per change, shared via context)
+- `src/components/LocalPanel.tsx` - local directory trees (draggables)
+- `src/components/SharePointPanel.tsx` - site cards, drop targets, and the
+  live destination structure preview
+- `src/shared/sitePreview.ts` - pure merge of existing SP folders with
+  folders created by migration (drives the preview)
+- `src/components/AddSiteModal.tsx`, `DestinationPicker.tsx`,
+  `ConfirmDialog.tsx`, `ContextMenu.tsx`, `Toasts.tsx`, `StatusBar.tsx`
 
 **Verification:**
-- CSV format matches specification
-- Reports are accurate
-- Save/load maintains all mappings and settings
-- Can resume work on saved project
+- Drag-and-drop creates mappings; remap asks for confirmation
+- Site cards update live as mappings are added, changed, and removed
+- Depth-blocked rows reject drops with a clear message
 
-### Phase 5: Validation and Polish
-**Files to create/update:**
-- `validators.py` - Validation logic
-- `api.py` - `/api/validate` endpoint
-- `frontend/src/App.jsx` - validation trigger and results display
-
-**Deliverables:**
-- Pre-export validation checks
-- Validation report window
-- Warning dialogs for issues
-- User documentation (README)
+### Phase 4: Validation, Review & Export
+**Files:**
+- `src/shared/review.ts` - export gating (hard blocks, acknowledgments)
+- `src/shared/csv.ts` - SPMT CSV generation
+- `src/shared/htmlReport.ts` - self-contained HTML summary
+- `src/components/ReviewScreen.tsx` - review & export screen
 
 **Verification:**
-- All validators work correctly
-- Issues are clearly reported
-- Can export despite warnings
-- Documentation is clear
+- Hard blocks prevent export; warnings are acknowledgeable
+- CSV format matches the SPMT specification; skipped folders omitted
+- HTML summary opens standalone and reflects the session
+
+### Phase 5: Persistence, Settings & Packaging
+**Files:**
+- `electron/store.ts` - atomic JSON read/write
+- `src/components/TechSettings.tsx` - PIN-protected technician settings
+- `electron-builder` configuration + GitHub Actions on-demand build
+
+**Verification:**
+- Session resume restores the full mapping state with inheritance recomputed
+- tech-config.json discovered in deployment, resources, and dev locations
+- `npm run dist` produces the Windows installer and portable executable
 
 ## Testing Requirements
 
-### Unit Tests
-Create `tests/` directory with:
-- `test_file_scanner.py` - Test scanning logic
-- `test_mapping_manager.py` - Test mapping operations
-- `test_filter_engine.py` - Test filtering
-- `test_export_manager.py` - Test CSV generation
-- `test_validators.py` - Test validation rules
+### Unit Tests (`desktop/tests/`, Vitest)
+- `scanDir.test.ts` - directory walk, filtering, metadata capture
+- `classify.test.ts` - ineligible name detection
+- `mappingEngine.test.ts` - the seven rules, validation statuses
+- `spFolders.test.ts` - SP folder tree operations
+- `sitePreview.test.ts` - live destination structure preview merge
+- `review.test.ts` - export gating
+- `csv.test.ts` - SPMT CSV generation
+- `htmlReport.test.ts` - HTML summary
 
-### Integration Tests
-- End-to-end workflow test
-- Large folder structure test (1000+ folders)
-- UNC path handling test
-- Edge cases (empty folders, special characters, long paths)
+All tests are headless — no Electron binary or display required.
 
 ### Manual Testing Checklist
-- [ ] Scan network share with UNC path
-- [ ] Scan local folder with deep structure
-- [ ] Map folders to multiple destinations
-- [ ] Apply date filters
-- [ ] Export CSV and verify format
-- [ ] Save project and reload
-- [ ] Validation catches issues
-- [ ] UI is responsive with large trees
-- [ ] Cross-platform compatibility (Windows primary)
+- [ ] Scan a network share with a UNC path
+- [ ] Scan a local folder with deep structure
+- [ ] Map folders to multiple destinations and verify the card previews
+- [ ] Verify inherited children appear nested in the destination card and
+      disappear on unmap
+- [ ] Depth and path-length blocks trigger at the configured thresholds
+- [ ] Export CSV and verify SPMT accepts it
+- [ ] Close and relaunch; resume the session; Start Fresh re-seeds sites
+- [ ] Install via the NSIS installer and run the portable build
+- [ ] UI stays responsive with large trees
 
 ## Code Quality Standards
 
-### Python Style
-- Follow PEP 8
-- Type hints on all functions
-- Docstrings for classes and public methods
-- Maximum function length: 50 lines
-- Maximum file length: 500 lines
+### TypeScript Style
+- Strict TypeScript throughout; no `any` in shared logic
+- Pure logic lives in `src/shared/` with **no Node or DOM imports** so it is
+  unit-testable and usable from both processes
+- The renderer touches the OS only through the preload bridge
+- Module-level doc comments describe responsibilities and invariants
 
 ### Error Handling
-- Graceful handling of permission errors
-- Network path timeout handling
-- Invalid path handling
-- User-friendly error messages
-- Logging to file for debugging
+- Graceful handling of permission errors and unreadable directories
+- Scan failures surface as toasts, never crashes
+- Atomic session writes prevent corruption on crash
+- User-friendly messages for every blocked action (depth, invalid names,
+  in-use folders)
 
 ### Performance
-- Lazy loading for large folder trees
-- Threading for long-running scans
-- Progress indicators for operations >2 seconds
-- Memory efficient for large structures
+- Scanning in a worker thread keeps the window responsive
+- Progress updates throttled over IPC
+- Mapping resolution computed once per change and shared (O(folders), not
+  per-row)
+- Memory-efficient tree structures for large shares
 
 ## Deployment
-
-### Development
-- Backend: `python3 main.py` (uvicorn on port 8000)
-- Frontend: `cd frontend && npm run dev` (Vite on port 5173)
-
-### Production
-- Build frontend: `cd frontend && npm run build`
-- Serve via FastAPI static files or a reverse proxy
-- Include requirements.txt for Python users
-- Version numbering (start at 2.0.0)
+- `npm run dist` packages a Windows NSIS installer and a portable executable
+  via electron-builder (unsigned; code signing can be layered in later)
+- A GitHub Actions workflow builds artifacts on demand
+- Technicians place `tech-config.json` next to the installed executable to
+  configure tenant domain, pre-seeded sites, and thresholds
+- Version numbering tracked in `desktop/package.json`
 
 ## Sample Test Data Structure
 Create test folder structure for development:
@@ -246,12 +252,15 @@ test_share/
 ```
 
 ## Success Criteria
-- Successfully scans file shares with 10,000+ items
+- Successfully scans file shares with 10,000+ items while staying responsive
 - Maps folders to destinations in under 5 clicks
-- Exports valid CSV usable by PowerShell scripts
-- Backend runs anywhere Python 3.10+ is available; frontend builds to static assets via Vite
-- Save/load works reliably
-- User can complete mapping workflow in under 30 minutes for medium complexity share
+- Destination cards always show the structure the migration will produce
+- Exports a valid SPMT-compatible CSV
+- Runs fully offline as an installed desktop application — no runtime
+  prerequisites on the user's machine
+- Session save/resume works reliably across relaunches
+- User can complete the mapping workflow in under 30 minutes for a
+  medium-complexity share
 
 ## Future Enhancements (Not for Initial Version)
 - Direct SharePoint connection to browse existing libraries

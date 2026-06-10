@@ -1,27 +1,58 @@
 /**
  * Right panel: SharePoint destination site cards.
  *
- * Every folder (including the always-present Documents/ root) is a dnd-kit
- * drop target. Depth indicators follow the configured thresholds: amber at
- * the warn depth, red + disabled [+ folder] at the block depth.
+ * Each card renders the live merged preview of the site's structure under
+ * Documents/: user-created folders (full drop targets with rename/delete and
+ * [+ folder]) interleaved with the folders migration will create, derived
+ * from the resolved mappings. Mapped local folders show as ⬅ chips on the
+ * folder receiving their contents; inherited children render as read-only
+ * "new" rows nested where they will land. The preview recomputes on every
+ * mapping change via useResolved().
+ *
+ * Depth indicators follow the configured thresholds: amber at the warn depth,
+ * red + disabled [+ folder] at the block depth. Created-by-migration rows
+ * show a muted depth only — inherited rows grow deeper by design and are not
+ * re-blocked.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useDroppable } from '@dnd-kit/core';
-import type { SharePointSite, SPFolder } from '../shared/types';
+import type { SharePointSite } from '../shared/types';
 import { useAppStore } from '../store/useAppStore';
+import { useResolved } from '../store/useResolved';
 import { depthStatus } from '../shared/mappingEngine';
+import { buildSitePreview, type PreviewNode, type PreviewSource } from '../shared/sitePreview';
 import { siteUrl } from '../shared/slug';
 import ContextMenu, { type MenuItem } from './ContextMenu';
 
-interface DropRowProps {
-  site: SharePointSite;
-  folder: SPFolder | null; // null = Documents/ root
-  path: string; // '' for Documents/
-  depth: number; // 0 for Documents/
+/** ⬅ chips naming the local folders whose contents land in this folder. */
+function SourceChips({ sources }: { sources: PreviewSource[] }) {
+  return (
+    <>
+      {sources.map((s) => (
+        <span
+          key={s.localPath}
+          className={`text-[11px] px-1.5 py-0.5 rounded bg-slate-100 whitespace-nowrap ${
+            s.isExplicit ? 'text-slate-600' : 'text-slate-500 italic'
+          }`}
+          title={`Receives the contents of ${s.localPath}${s.isExplicit ? '' : ' (inherited)'}`}
+        >
+          ⬅ {s.localName}
+        </span>
+      ))}
+    </>
+  );
 }
 
-function SpFolderRow({ site, folder, path, depth }: DropRowProps) {
+interface RowProps {
+  site: SharePointSite;
+  node: PreviewNode | null; // null = Documents/ root
+  depth: number; // 0 for Documents/
+  childNodes: PreviewNode[];
+  sources: PreviewSource[];
+}
+
+function SpFolderRow({ site, node, depth, childNodes, sources }: RowProps) {
   const techConfig = useAppStore((s) => s.techConfig);
   const createSpFolder = useAppStore((s) => s.createSpFolder);
   const renameSpFolderAction = useAppStore((s) => s.renameSpFolderAction);
@@ -30,8 +61,13 @@ function SpFolderRow({ site, folder, path, depth }: DropRowProps) {
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [renaming, setRenaming] = useState(false);
-  const [renameValue, setRenameValue] = useState(folder?.name ?? '');
+  const [renameValue, setRenameValue] = useState(node?.folder?.name ?? '');
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [open, setOpen] = useState(true);
+
+  const existing = !node || node.existing;
+  const folder = node?.folder ?? null;
+  const path = node?.path ?? '';
 
   const status = depthStatus(depth, techConfig);
   const blocked = status === 'block';
@@ -40,6 +76,7 @@ function SpFolderRow({ site, folder, path, depth }: DropRowProps) {
   const { isOver, setNodeRef } = useDroppable({
     id: `drop:${site.id}:${path}`,
     data: { siteId: site.id, spFolderPath: path, depth, blocked },
+    disabled: !existing, // created-by-migration rows are not drop targets
   });
 
   const submitAdd = () => {
@@ -62,77 +99,121 @@ function SpFolderRow({ site, folder, path, depth }: DropRowProps) {
       ]
     : [];
 
+  const chevron = (
+    <button
+      onClick={() => setOpen((v) => !v)}
+      className={`w-3 text-[10px] text-slate-400 ${childNodes.length ? '' : 'invisible'}`}
+      title={open ? 'Collapse' : 'Expand'}
+    >
+      {open ? '▼' : '▶'}
+    </button>
+  );
+
+  const row = existing ? (
+    <div
+      ref={setNodeRef}
+      onContextMenu={(e) => {
+        if (!folder) return;
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
+      className={`group flex items-center gap-1.5 py-1 pr-1 rounded text-sm transition-colors ${
+        isOver
+          ? blocked
+            ? 'bg-red-100 ring-2 ring-red-400'
+            : 'bg-blue-50 ring-2 ring-blue-400'
+          : 'hover:bg-slate-50'
+      }`}
+      style={{ paddingLeft: depth * 16 + 8 }}
+    >
+      {chevron}
+      <span>📁</span>
+      {renaming ? (
+        <input
+          autoFocus
+          className="input !py-0.5 !px-1.5 text-sm"
+          value={renameValue}
+          onChange={(e) => setRenameValue(e.target.value)}
+          onBlur={submitRename}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submitRename();
+            if (e.key === 'Escape') setRenaming(false);
+          }}
+        />
+      ) : (
+        <span className="font-medium truncate">{folder ? folder.name : 'Documents'}{!folder && '/'}</span>
+      )}
+
+      <SourceChips sources={sources} />
+
+      {depth > 0 && (
+        <span
+          className={`text-[11px] whitespace-nowrap ${
+            status === 'block'
+              ? 'text-red-600 font-semibold'
+              : status === 'warn'
+              ? 'text-amber-600 font-medium'
+              : 'text-slate-400'
+          }`}
+          title={
+            status === 'block'
+              ? 'Exceeds the SharePoint folder depth limit — cannot receive mappings'
+              : status === 'warn'
+              ? 'Folders at this depth may cause migration reliability issues. Consider flattening.'
+              : undefined
+          }
+        >
+          {status === 'block' ? '✖' : status === 'warn' ? '⚠' : ''} depth {depth}
+        </span>
+      )}
+
+      <span className="flex-1" />
+
+      <button
+        className="opacity-0 group-hover:opacity-100 text-[11px] text-slate-500 border border-slate-300 rounded px-1.5 py-0.5 hover:bg-slate-100 disabled:opacity-30 whitespace-nowrap"
+        disabled={childBlocked}
+        title={
+          childBlocked
+            ? `Cannot create folders at depth ${depth + 1} — SharePoint destinations are limited to ${techConfig.depthBlockAt - 1} levels`
+            : 'Create a subfolder'
+        }
+        onClick={() => setAdding(true)}
+      >
+        + folder
+      </button>
+    </div>
+  ) : (
+    <div
+      className="flex items-center gap-1.5 py-1 pr-1 rounded text-sm"
+      style={{ paddingLeft: depth * 16 + 8 }}
+      title={
+        sources.length
+          ? `Will be created by migration from:\n${sources.map((s) => s.localPath).join('\n')}`
+          : 'Created as a parent path for folders migrating beneath it'
+      }
+    >
+      {chevron}
+      <span className="opacity-60">📁</span>
+      <span className="italic text-slate-600 truncate">{node!.name}</span>
+      <span className="text-[10px] uppercase tracking-wide text-slate-400 border border-dashed border-slate-300 rounded px-1 whitespace-nowrap">
+        new
+      </span>
+      {sources.length > 1 && (
+        <span
+          className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 whitespace-nowrap"
+          title={`${sources.length} local folders merge their contents here`}
+        >
+          merges {sources.length}
+        </span>
+      )}
+      <span className="text-[11px] text-slate-400 whitespace-nowrap">depth {depth}</span>
+      <span className="flex-1" />
+    </div>
+  );
+
   return (
     <div>
-      <div
-        ref={setNodeRef}
-        onContextMenu={(e) => {
-          if (!folder) return;
-          e.preventDefault();
-          setMenu({ x: e.clientX, y: e.clientY });
-        }}
-        className={`group flex items-center gap-1.5 py-1 pr-1 rounded text-sm transition-colors ${
-          isOver
-            ? blocked
-              ? 'bg-red-100 ring-2 ring-red-400'
-              : 'bg-blue-50 ring-2 ring-blue-400'
-            : 'hover:bg-slate-50'
-        }`}
-        style={{ paddingLeft: depth * 16 + 8 }}
-      >
-        <span>📁</span>
-        {renaming ? (
-          <input
-            autoFocus
-            className="input !py-0.5 !px-1.5 text-sm"
-            value={renameValue}
-            onChange={(e) => setRenameValue(e.target.value)}
-            onBlur={submitRename}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') submitRename();
-              if (e.key === 'Escape') setRenaming(false);
-            }}
-          />
-        ) : (
-          <span className="font-medium truncate">{folder ? folder.name : 'Documents'}{!folder && '/'}</span>
-        )}
-
-        {depth > 0 && (
-          <span
-            className={`text-[11px] whitespace-nowrap ${
-              status === 'block'
-                ? 'text-red-600 font-semibold'
-                : status === 'warn'
-                ? 'text-amber-600 font-medium'
-                : 'text-slate-400'
-            }`}
-            title={
-              status === 'block'
-                ? 'Exceeds the SharePoint folder depth limit — cannot receive mappings'
-                : status === 'warn'
-                ? 'Folders at this depth may cause migration reliability issues. Consider flattening.'
-                : undefined
-            }
-          >
-            {status === 'block' ? '✖' : status === 'warn' ? '⚠' : ''} depth {depth}
-          </span>
-        )}
-
-        <span className="flex-1" />
-
-        <button
-          className="opacity-0 group-hover:opacity-100 text-[11px] text-slate-500 border border-slate-300 rounded px-1.5 py-0.5 hover:bg-slate-100 disabled:opacity-30 whitespace-nowrap"
-          disabled={childBlocked}
-          title={
-            childBlocked
-              ? `Cannot create folders at depth ${depth + 1} — SharePoint destinations are limited to ${techConfig.depthBlockAt - 1} levels`
-              : 'Create a subfolder'
-          }
-          onClick={() => setAdding(true)}
-        >
-          + folder
-        </button>
-      </div>
+      {row}
 
       {adding && (
         <div className="flex gap-1 my-1" style={{ paddingLeft: (depth + 1) * 16 + 8 }}>
@@ -151,19 +232,16 @@ function SpFolderRow({ site, folder, path, depth }: DropRowProps) {
         </div>
       )}
 
-      {folder?.children.map((child) => (
-        <SpFolderRow
-          key={child.id}
-          site={site}
-          folder={child}
-          path={`${path}/${child.name}`.replace(/^\//, '')}
-          depth={depth + 1}
-        />
-      ))}
-
-      {!folder &&
-        site.folders.map((child) => (
-          <SpFolderRow key={child.id} site={site} folder={child} path={child.name} depth={1} />
+      {open &&
+        childNodes.map((child) => (
+          <SpFolderRow
+            key={child.path}
+            site={site}
+            node={child}
+            depth={depth + 1}
+            childNodes={child.children}
+            sources={child.sources}
+          />
         ))}
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
@@ -175,6 +253,11 @@ function SiteCard({ site }: { site: SharePointSite }) {
   const tenantDomain = useAppStore((s) => s.techConfig.tenantDomain);
   const removeSite = useAppStore((s) => s.removeSite);
   const hasMappings = useAppStore((s) => s.explicitMappings.some((m) => m.spSiteId === site.id));
+  const { list } = useResolved();
+
+  // Recomputed on every mapping/skip/folder change — this is what keeps the
+  // card's structure preview live.
+  const preview = useMemo(() => buildSitePreview(site, list), [site, list]);
 
   return (
     <div className="card mb-3 overflow-hidden" style={{ borderTop: `3px solid ${site.color}` }}>
@@ -196,7 +279,13 @@ function SiteCard({ site }: { site: SharePointSite }) {
         </button>
       </div>
       <div className="p-2">
-        <SpFolderRow site={site} folder={null} path="" depth={0} />
+        <SpFolderRow
+          site={site}
+          node={null}
+          depth={0}
+          childNodes={preview.children}
+          sources={preview.rootSources}
+        />
       </div>
     </div>
   );
