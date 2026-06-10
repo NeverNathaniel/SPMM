@@ -49,3 +49,37 @@ jobs:
           path: |
             desktop/release/*.exe
           if-no-files-found: error
+
+  release:
+    needs: package-windows
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: migration-mapper-windows
+          path: release-artifacts
+      - name: Get version
+        id: version
+        run: echo "version=$(node -p "require('./desktop/package.json').version")" >> $GITHUB_OUTPUT
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release create "v${VERSION}" \
+            --title "Migration Mapper v${VERSION}" \
+            --notes "## Migration Mapper v${VERSION}
+
+          Windows installer and portable executable for Migration Mapper — a tool for visually mapping local/network folder structures to SharePoint Online destinations and exporting SPMT-compatible migration files.
+
+          ### Installation
+          - **Setup (recommended):** Run the \`*-Setup-*.exe\` installer
+          - **Portable:** Run the \`*-Portable-*.exe\` directly — no installation needed
+
+          ### Usage
+          Technicians can place a \`tech-config.json\` next to the executable to pre-configure tenant domain, presets, and thresholds." \
+            release-artifacts/*.exe
