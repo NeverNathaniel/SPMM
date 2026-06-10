@@ -65,14 +65,12 @@ jobs:
       - name: Get version
         id: version
         run: echo "version=$(node -p "require('./desktop/package.json').version")" >> $GITHUB_OUTPUT
-      - name: Create GitHub Release
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          gh release create "v${VERSION}" \
-            --title "Migration Mapper v${VERSION}" \
-            --notes "## Migration Mapper v${VERSION}
+          NOTES="## Migration Mapper v${VERSION}
 
           Windows installer and portable executable for Migration Mapper — a tool for visually mapping local/network folder structures to SharePoint Online destinations and exporting SPMT-compatible migration files.
 
@@ -81,5 +79,17 @@ jobs:
           - **Portable:** Run the \`*-Portable-*.exe\` directly — no installation needed
 
           ### Usage
-          Technicians can place a \`tech-config.json\` next to the executable to pre-configure tenant domain, presets, and thresholds." \
-            release-artifacts/*.exe
+          Technicians can place a \`tech-config.json\` next to the executable to pre-configure tenant domain, presets, and thresholds."
+
+          # Idempotent: if the tag already exists, refresh its assets instead of
+          # failing; otherwise create the release. Lets a re-run update a build.
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "Release v${VERSION} exists — uploading assets with --clobber."
+            gh release upload "v${VERSION}" release-artifacts/*.exe --clobber
+          else
+            echo "Creating release v${VERSION}."
+            gh release create "v${VERSION}" \
+              --title "Migration Mapper v${VERSION}" \
+              --notes "${NOTES}" \
+              release-artifacts/*.exe
+          fi

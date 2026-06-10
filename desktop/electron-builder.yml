@@ -9,10 +9,16 @@ win:
   target:
     - nsis
     - portable
-  artifactName: ${productName}-${version}-${arch}.${ext}
+# Distinct artifact names per target. Without these, both targets resolve to
+# the same filename and one overwrites the other in release/, so only a single
+# .exe survives to be published. The -Setup-/-Portable- markers also match the
+# patterns referenced in the release notes (.github/workflows/desktop-build.yml).
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false
+  artifactName: ${productName}-${version}-Setup-${arch}.${ext}
+portable:
+  artifactName: ${productName}-${version}-Portable-${arch}.${ext}
 # Technicians can drop a tech-config.json next to the installed executable
 # (or into resources/) to pre-bake tenant domain, presets, and thresholds.
