@@ -1,0 +1,18 @@
+appId: com.migrationmapper.app
+productName: Migration Mapper
+directories:
+  output: release
+files:
+  - dist/**
+  - dist-electron/**
+win:
+  target:
+    - nsis
+    - portable
+  artifactName: ${productName}-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+# Technicians can drop a tech-config.json next to the installed executable
+# (or into resources/) to pre-bake tenant domain, presets, and thresholds.

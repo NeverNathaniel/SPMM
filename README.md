@@ -1,5 +1,12 @@
 # File Share to SharePoint Migration Mapping Tool (SPMM)
 
+> **🖥️ Desktop app:** the current direction of this project is the
+> technician-deployable **Migration Mapper** Electron app in
+> [`desktop/`](desktop/README.md) — drag-and-drop folder mapping, depth and
+> path-length validation, ineligible-file detection, and SPMT-compatible CSV +
+> HTML summary export. The FastAPI/React web prototype below remains as the
+> original proof of concept.
+
 A web application for visually mapping file share folders to SharePoint libraries using an interactive mindmap interface, generating CSV mapping files for use with PowerShell migration scripts.
 
 ## Features

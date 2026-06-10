@@ -4,9 +4,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-SPMM (File Share to SharePoint Migration Mapper) is a web application for visually mapping file share folder structures to SharePoint libraries during migration planning. It uses a **FastAPI** backend (Python) and a **React + React Flow** frontend, providing a mindmap-style drag-and-connect interface.
+SPMM (File Share to SharePoint Migration Mapper) contains two applications:
 
-## Commands
+1. **`desktop/` — Migration Mapper (current direction)**: a technician-deployed **Electron + React + TypeScript** desktop app for visually mapping local/network folder structures to SharePoint Online destinations, exporting an SPMT-compatible CSV and HTML summary. See `desktop/README.md` for architecture and commands.
+2. **Repository root — the original web prototype**: a **FastAPI** backend (Python) and a **React + React Flow** frontend providing a mindmap-style drag-and-connect interface. The Python modules also serve as the reference implementation the desktop core logic was ported from.
+
+## Desktop App Commands (`desktop/`)
+
+```bash
+cd desktop
+npm install        # Node 20+; set ELECTRON_SKIP_BINARY_DOWNLOAD=1 in headless envs
+npm test           # Vitest unit tests (mapping engine, validation, CSV, scanner)
+npm run build      # tsc --noEmit + vite build (renderer, main, preload)
+npm run dev        # Electron with hot reload (needs the Electron binary)
+npm run dist       # Windows installer/portable via electron-builder
+```
+
+Desktop key facts:
+- Pure logic lives in `desktop/src/shared/` (no Node/DOM imports) and is fully unit-tested in `desktop/tests/`.
+- Inherited mappings are **derived, never persisted** — only explicit mappings are stored; recalculation happens on every change and on session load.
+- Depth thresholds (warn 2 / block 3, relative to `Documents/`) and path-length thresholds (warn 256 / block 400) are configurable in `tech-config.json` and enforced in `src/shared/mappingEngine.ts` + `src/shared/review.ts`.
+- The SPMT CSV deliberately does **not** apply formula-prefix escaping — it is consumed by SPMT, not Excel; mangling a path would break the migration.
+
+## Web Prototype Commands
 
 **Install backend dependencies:**
 ```bash
