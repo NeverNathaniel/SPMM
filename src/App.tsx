@@ -58,8 +58,7 @@ export default function App() {
           <h1 className="text-lg font-semibold mb-2">Migration Mapper</h1>
           <p className="text-sm text-slate-500">
             This window is running outside Electron, so file-system access is unavailable.
-            Start the app with <code className="bg-slate-100 px-1 rounded">npm run dev</code> from the
-            <code className="bg-slate-100 px-1 rounded ml-1">desktop/</code> directory.
+            Start the app with <code className="bg-slate-100 px-1 rounded">npm run dev</code>.
           </p>
         </div>
       </div>
