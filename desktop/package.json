@@ -1,7 +1,7 @@
 {
   "name": "migration-mapper",
   "productName": "Migration Mapper",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Visually map local folder structures to SharePoint Online destinations and export SPMT-compatible migration files",
   "type": "module",
   "main": "dist-electron/main.js",
