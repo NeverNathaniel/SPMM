@@ -1,50 +1,10 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-*.egg-info/
+node_modules/
 dist/
-build/
-*.egg
-
-# Virtual environments
-.venv/
-venv/
-env/
-ENV/
-
-# Testing & coverage
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-*.code-workspace
-
-# Logs
-*.log
-
-# Test data
-test_share/
+dist-electron/
+release/
+*.local
+tech-config.json
 
 # OS
 .DS_Store
 Thumbs.db
-
-# Project files (SPMM save format)
-*.spmm
-
-# Node
-frontend/node_modules/
-frontend/dist/
-
-# Export artifacts
-*.csv
