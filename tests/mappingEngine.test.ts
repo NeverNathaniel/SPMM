@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildFolderMapStates,
   depthStatus,
   detectPathType,
-  folderMapState,
+  removeExplicitMapping,
   resolveMappings,
   resolveMappingsByPath,
+  setExplicitMapping,
   spFolderDepth,
   worstCasePathLength,
 } from '../src/shared/mappingEngine';
@@ -48,7 +50,7 @@ describe('Rule 2 — child inheritance', () => {
     expect(inv.isExplicit).toBe(false);
     expect(inv.spFolderPath).toBe('Projects/Invoices');
     expect(inv.resolvedTargetUrl).toBe(
-      'https://contoso.sharepoint.com/sites/Ops/Documents/Projects/Invoices'
+      'https://fabrikam.sharepoint.com/sites/Ops/Shared Documents/Projects/Invoices'
     );
 
     // Siblings outside the mapped subtree stay unmapped.
@@ -139,9 +141,9 @@ describe('depth & path-length validation', () => {
     expect(depthStatus(4, CONFIG)).toBe('block');
   });
 
-  it('calculates the worst-case path from the longest filename', () => {
+  it('calculates the worst-case path from the longest filename (real "Shared Documents" URL segment)', () => {
     const len = worstCasePathLength('contoso.sharepoint.com', 'HR', 'Payroll', 'report.docx');
-    expect(len).toBe('https://contoso.sharepoint.com/sites/HR/Documents/Payroll/report.docx'.length);
+    expect(len).toBe('https://contoso.sharepoint.com/sites/HR/Shared Documents/Payroll/report.docx'.length);
   });
 
   it('flags path length status on resolved mappings', () => {
@@ -172,14 +174,38 @@ describe('depth & path-length validation', () => {
   });
 });
 
-describe('folderMapState (tree UI)', () => {
+describe('Rule 4 — remap replaces, unmap removes', () => {
+  it('setExplicitMapping replaces the mapping for the same path', () => {
+    const first = mapping(ap.path, ap.id, ops.id, 'Projects');
+    const replacement = mapping(ap.path, ap.id, hrSite.id, 'Payroll');
+    const result = setExplicitMapping([first], replacement);
+    expect(result).toHaveLength(1);
+    expect(result[0].spSiteId).toBe(hrSite.id);
+    expect(result[0].spFolderPath).toBe('Payroll');
+  });
+
+  it('setExplicitMapping leaves other paths untouched', () => {
+    const other = mapping(ar.path, ar.id, ops.id, '');
+    const result = setExplicitMapping([other], mapping(ap.path, ap.id, hrSite.id, 'Payroll'));
+    expect(result).toHaveLength(2);
+    expect(result).toContainEqual(other);
+  });
+
+  it('removeExplicitMapping removes exactly the given path', () => {
+    const a = mapping(ap.path, ap.id, ops.id, 'Projects');
+    const b = mapping(ar.path, ar.id, ops.id, '');
+    expect(removeExplicitMapping([a, b], ap.path)).toEqual([b]);
+  });
+});
+
+describe('buildFolderMapStates (tree UI)', () => {
   it('reports split when only part of a subtree is mapped', () => {
     const resolved = resolveMappingsByPath(
       roots, sites,
       [mapping(ar.path, ar.id, ops.id, '')],
       [], [], CONFIG
     );
-    const state = folderMapState(acctTree, resolved);
+    const state = buildFolderMapStates(roots, resolved).get(acctTree.path)!;
     expect(state.status).toBe('unmapped');
     expect(state.split).toBe(true);
   });
@@ -190,12 +216,22 @@ describe('folderMapState (tree UI)', () => {
       [mapping(ap.path, ap.id, ops.id, '')],
       [], [], CONFIG
     );
-    expect(folderMapState(invoices, resolved).status).toBe('inherited');
-    expect(folderMapState(ap, resolved).status).toBe('explicit');
+    const states = buildFolderMapStates(roots, resolved);
+    expect(states.get(invoices.path)!.status).toBe('inherited');
+    expect(states.get(ap.path)!.status).toBe('explicit');
+  });
+
+  it('marks a fully mapped subtree as not split', () => {
+    const resolved = resolveMappingsByPath(
+      roots, sites,
+      [mapping(ap.path, ap.id, ops.id, '')],
+      [], [], CONFIG
+    );
+    expect(buildFolderMapStates(roots, resolved).get(ap.path)!.split).toBe(false);
   });
 });
 
-describe('skip and acknowledgment passthrough', () => {
+describe('skip semantics', () => {
   it('marks skipped and acknowledged folders on resolved mappings', () => {
     const resolved = resolveMappingsByPath(
       roots, sites,
@@ -206,5 +242,37 @@ describe('skip and acknowledgment passthrough', () => {
     );
     expect(resolved.get(archive.path)!.skipped).toBe(true);
     expect(resolved.get(invoices.path)!.acknowledged).toBe(true);
+  });
+
+  it('skip cascades: descendants of a skipped folder stop inheriting', () => {
+    // SPMT tasks are recursive — a skipped folder cannot be carved out of a
+    // parent task, so its subtree must leave the plan entirely.
+    const resolved = resolveMappingsByPath(
+      roots, sites,
+      [mapping(acctTree.path, acctTree.id, ops.id, 'Projects')],
+      [ap.path],
+      [],
+      CONFIG
+    );
+    expect(resolved.get(ap.path)!.skipped).toBe(true);
+    expect(resolved.has(invoices.path)).toBe(false);
+    expect(resolved.has(archive.path)).toBe(false);
+    // Siblings outside the skipped branch still inherit.
+    expect(resolved.get(ar.path)!.spFolderPath).toBe('Projects/AR');
+  });
+
+  it('an explicit mapping beneath a skipped ancestor still re-roots its subtree', () => {
+    const resolved = resolveMappingsByPath(
+      roots, sites,
+      [
+        mapping(acctTree.path, acctTree.id, ops.id, 'Projects'),
+        mapping(invoices.path, invoices.id, hrSite.id, 'Payroll'),
+      ],
+      [ap.path],
+      [],
+      CONFIG
+    );
+    expect(resolved.has(archive.path)).toBe(false); // still cut off
+    expect(resolved.get(invoices.path)!.spSiteId).toBe(hrSite.id); // explicit survives
   });
 });

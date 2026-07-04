@@ -16,9 +16,15 @@ const api = {
   },
   loadSession: () => ipcRenderer.invoke('load-session'),
   saveSession: (state: unknown) => ipcRenderer.invoke('save-session', state),
+  // Synchronous by design: called from beforeunload, where async IPC would be
+  // cut off mid-flight. Used only for the final flush of unsaved changes.
+  saveSessionSync: (state: unknown) => ipcRenderer.sendSync('save-session-sync', state),
   clearSession: () => ipcRenderer.invoke('clear-session'),
   getTechConfig: () => ipcRenderer.invoke('get-tech-config'),
-  saveTechConfig: (cfg: unknown) => ipcRenderer.invoke('save-tech-config', cfg),
+  hasSettingsPin: () => ipcRenderer.invoke('has-settings-pin'),
+  verifySettingsPin: (pin: string) => ipcRenderer.invoke('verify-settings-pin', pin),
+  saveTechConfig: (cfg: unknown, pinUpdate?: string) =>
+    ipcRenderer.invoke('save-tech-config', cfg, pinUpdate),
   exportFiles: (payload: { csv: string; html: string; exportPathOverride?: string }) =>
     ipcRenderer.invoke('export-files', payload),
   showInFolder: (target: string) => ipcRenderer.invoke('show-in-folder', target),

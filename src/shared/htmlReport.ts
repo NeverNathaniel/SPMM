@@ -16,6 +16,9 @@ import type {
 } from './types';
 import { flattenTree } from './mappingEngine';
 import { REASON_LABELS, reasonDetail } from './classify';
+import { siteUrl } from './slug';
+import type { ReviewSummary } from './review';
+import type { SpmtPlan } from './spmtPlan';
 
 function esc(s: string): string {
   return s
@@ -30,23 +33,26 @@ export interface ReportInput {
   sites: SharePointSite[];
   resolved: ResolvedMapping[];
   config: TechConfig;
+  /** The same summary the Review screen shows — keeps the numbers identical */
+  summary: ReviewSummary;
+  /** The planned SPMT tasks the CSV contains */
+  plan: SpmtPlan;
   exportedAt: Date;
 }
 
 export function generateHtmlReport(input: ReportInput): string {
-  const { roots, sites, resolved, config, exportedAt } = input;
+  const { roots, sites, resolved, config, summary, plan, exportedAt } = input;
 
   const allFolders: FolderNode[] = roots.flatMap((r) => flattenTree(r.tree));
   const resolvedByPath = new Map(resolved.map((m) => [m.localPath, m]));
   const active = resolved.filter((m) => !m.skipped);
-  const explicitCount = active.filter((m) => m.isExplicit).length;
-  const inheritedCount = active.length - explicitCount;
-  const unmapped = allFolders.filter((f) => !resolvedByPath.has(f.path));
+  const unmapped = summary.unmappedFolders;
   const skipped = resolved.filter((m) => m.skipped);
   const pathWarnings = active.filter((m) => m.pathLengthStatus !== 'ok');
   const ineligible = allFolders.filter((f) => f.ineligibleFiles.length > 0 || f.hasIneligibleFolderName);
   const ineligibleFileTotal = allFolders.reduce((n, f) => n + f.ineligibleFiles.length, 0);
-  const pct = allFolders.length ? Math.round((active.length / allFolders.length) * 100) : 0;
+  const flaggedFolderNameTotal = ineligible.filter((f) => f.hasIneligibleFolderName).length;
+  const pct = summary.progressPct;
 
   const statBox = (value: string | number, label: string, cls = '') =>
     `<div class="stat-box ${cls}"><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div>`;
@@ -68,7 +74,7 @@ export function generateHtmlReport(input: ReportInput): string {
         )
         .join('\n');
       return `<div class="card">
-        <h2><span class="swatch" style="background:${esc(site.color)}"></span> ${esc(site.name)} <span class="muted">— ${esc(`https://${config.tenantDomain}/sites/${site.slug}`)}</span></h2>
+        <h2><span class="swatch" style="background:${esc(site.color)}"></span> ${esc(site.name)} <span class="muted">— ${esc(siteUrl(config.tenantDomain, site.slug))}</span></h2>
         <div class="table-container"><table>
           <thead><tr><th>Source Folder</th><th>Destination</th><th>Mapping</th></tr></thead>
           <tbody>${body}</tbody>
@@ -120,8 +126,8 @@ export function generateHtmlReport(input: ReportInput): string {
 
   const ineligibleSection = ineligible.length
     ? `<div class="card callout callout-amber">
-        <h2>⚠ Ineligible Files</h2>
-        <p>${ineligibleFileTotal} file(s) flagged as potentially ineligible. Review and fix these in Explorer before running SPMT.</p>
+        <h2>⚠ Ineligible Names</h2>
+        <p>${ineligibleFileTotal} file(s) and ${flaggedFolderNameTotal} folder name(s) flagged as potentially ineligible. Review and fix these in Explorer before running SPMT.</p>
         <div class="table-container"><table>
           <thead><tr><th>Folder</th><th>File</th><th>Issue</th><th>Destination Path</th></tr></thead>
           <tbody>${ineligibleRows}</tbody>
@@ -139,8 +145,35 @@ export function generateHtmlReport(input: ReportInput): string {
   const skippedSection = skipped.length
     ? `<div class="card callout callout-grey">
         <h2>Skipped Folders (${skipped.length})</h2>
-        <p>These folders were intentionally excluded from the migration CSV.</p>
+        <p>These folders (and everything beneath them, unless a branch was explicitly re-mapped) are intentionally excluded from the migration — no SPMT task covers them.${
+          summary.excludedBySkip.length
+            ? ` ${summary.excludedBySkip.length} descendant folder(s) are excluded with them.`
+            : ''
+        }</p>
         <ul>${skipped.map((m) => `<li>${esc(m.localPath)}</li>`).join('')}</ul>
+      </div>`
+    : '';
+
+  const splitFileSection = plan.splitFileWarnings.length
+    ? `<div class="card callout callout-amber">
+        <h2>⚠ Files Not Covered by Any Task</h2>
+        <p>These folders were split into per-subfolder migration tasks (because a child is skipped or re-mapped elsewhere), and SPMT tasks cannot copy a folder's direct files without recursing. The files listed below must be moved manually or the mapping restructured.</p>
+        <div class="table-container"><table>
+          <thead><tr><th>Folder</th><th>Planned Destination</th><th>Direct Files Affected</th></tr></thead>
+          <tbody>${plan.splitFileWarnings
+            .map((w) => {
+              const dest = resolvedByPath.get(w.localPath);
+              return `<tr><td>${esc(w.localPath)}</td><td>${dest ? esc(dest.resolvedTargetUrl) : '—'}</td><td>${w.fileCount}</td></tr>`;
+            })
+            .join('\n')}</tbody>
+        </table></div>
+      </div>`
+    : '';
+
+  const hiddenNote = summary.hiddenItemsSkipped
+    ? `<div class="card callout callout-grey">
+        <h2>Hidden / System Items</h2>
+        <p>${summary.hiddenItemsSkipped} hidden or system item(s) were filtered out at scan time and are not part of this plan. SPMT's recursive tasks may still migrate them unless they carry the hidden attribute on disk — spot-check for names like <code>.git</code> or <code>$RECYCLE.BIN</code> inside mapped folders before running SPMT.</p>
       </div>`
     : '';
 
@@ -200,8 +233,9 @@ export function generateHtmlReport(input: ReportInput): string {
     <div class="stats-grid">
       ${statBox(roots.length, 'Directory Roots')}
       ${statBox(allFolders.length, 'Folders Scanned')}
-      ${statBox(explicitCount, 'Explicitly Mapped', 'success')}
-      ${statBox(inheritedCount, 'Inherited', 'success')}
+      ${statBox(summary.explicitCount, 'Explicitly Mapped', 'success')}
+      ${statBox(summary.inheritedCount, 'Inherited', 'success')}
+      ${statBox(plan.tasks.length, 'SPMT Tasks', 'success')}
       ${statBox(unmapped.length, 'Unmapped', unmapped.length ? 'warning' : 'success')}
       ${statBox(skipped.length, 'Skipped')}
     </div>
@@ -211,9 +245,11 @@ export function generateHtmlReport(input: ReportInput): string {
 
   ${siteSections}
   ${pathWarningSection}
+  ${splitFileSection}
   ${ineligibleSection}
   ${unmappedSection}
   ${skippedSection}
+  ${hiddenNote}
 
   <footer>Generated by Migration Mapper — run the accompanying migration-mapping.csv through SPMT.</footer>
 </div>

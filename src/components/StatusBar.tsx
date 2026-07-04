@@ -22,6 +22,8 @@ export default function StatusBar() {
       <span>·</span>
       <span className="text-green-600">{mapped} mapped</span>
       <span>·</span>
+      <span>{summary.taskCount} SPMT task{summary.taskCount === 1 ? '' : 's'}</span>
+      <span>·</span>
       <span className={summary.unmappedFolders.length ? 'text-amber-600' : ''}>
         {summary.unmappedFolders.length} unmapped
       </span>

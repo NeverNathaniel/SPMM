@@ -35,6 +35,11 @@ export interface FolderNode {
   files: string[];
   /** True when `files` was truncated against fileCount */
   filesTruncated: boolean;
+  /**
+   * Direct entries filtered out at scan time (hidden/system names). Optional:
+   * absent in sessions saved before the field existed.
+   */
+  hiddenItemsSkipped?: number;
   children: FolderNode[];
 }
 
@@ -160,5 +165,7 @@ export interface ExportResult {
   exportDir?: string;
   csvPath?: string;
   htmlPath?: string;
+  /** Export succeeded but not exactly as configured (e.g. bad path override) */
+  warning?: string;
   error?: string;
 }

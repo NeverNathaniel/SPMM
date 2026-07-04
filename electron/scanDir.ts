@@ -32,6 +32,7 @@ export function scanDir(dirPath: string, onFolder?: (currentPath: string) => voi
     hasIneligibleFolderName: classifyFolderName(name) !== null,
     files: [],
     filesTruncated: false,
+    hiddenItemsSkipped: 0,
     children: [],
   };
   onFolder?.(dirPath);
@@ -48,10 +49,18 @@ export function scanDir(dirPath: string, onFolder?: (currentPath: string) => voi
     try {
       if (entry.isSymbolicLink()) continue; // avoid cycles / tree escapes
       if (entry.isDirectory()) {
-        if (isHiddenOrSystemDir(entry.name)) continue;
+        if (isHiddenOrSystemDir(entry.name)) {
+          // Counted so review can note that SPMT's recursive tasks may still
+          // migrate these unless they carry the hidden attribute on disk.
+          node.hiddenItemsSkipped = (node.hiddenItemsSkipped ?? 0) + 1;
+          continue;
+        }
         node.children.push(scanDir(path.join(dirPath, entry.name), onFolder));
       } else if (entry.isFile()) {
-        if (isHiddenFile(entry.name)) continue;
+        if (isHiddenFile(entry.name)) {
+          node.hiddenItemsSkipped = (node.hiddenItemsSkipped ?? 0) + 1;
+          continue;
+        }
         node.fileCount++;
         if (entry.name.length > node.longestFilenameLength) {
           node.longestFilename = entry.name;

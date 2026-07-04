@@ -1,19 +1,25 @@
 /**
  * SPMT-compatible CSV generation.
  *
- * Format (one row per resolved mapping, explicit + inherited — SPMT needs
- * every path spelled out):
+ * One row per planned migration task (see spmtPlan.ts — each row is an
+ * independent, fully recursive SPMT task):
  *
- *   Source,SourceDocLib,SourceSubFolder,TargetWeb,TargetDocLib,TargetSubFolder
  *   \\SERVER\Accounting\AR,,,https://contoso.sharepoint.com/sites/Accounting,Documents,AR
  *
- * Skipped folders are omitted entirely. Source paths are written exactly as
- * scanned (Rule 7) — no formula-prefix neutralisation is applied because this
- * file is consumed by SPMT, where an injected apostrophe would corrupt the
- * path. Open the HTML summary, not this CSV, in spreadsheet software.
+ * The SPMT bulk format has NO header row — SPMT treats every line as a task,
+ * so a header line would be read as a migration of a folder named "Source".
+ * TargetDocLib is the library's display name ("Documents"), matching
+ * Microsoft's own samples.
+ *
+ * Source paths are written exactly as scanned (Rule 7) — no formula-prefix
+ * neutralisation is applied because this file is consumed by SPMT, where an
+ * injected apostrophe would corrupt the path. It is also written without a
+ * UTF-8 BOM for the same reason: SPMT is the consumer, not Excel. Open the
+ * HTML summary, not this CSV, in spreadsheet software.
  */
 
-import type { ResolvedMapping, SharePointSite } from './types';
+import type { SharePointSite } from './types';
+import type { SpmtTask } from './spmtPlan';
 import { siteUrl } from './slug';
 
 export function csvField(value: string): string {
@@ -23,35 +29,25 @@ export function csvField(value: string): string {
   return value;
 }
 
-export const SPMT_HEADERS = [
-  'Source',
-  'SourceDocLib',
-  'SourceSubFolder',
-  'TargetWeb',
-  'TargetDocLib',
-  'TargetSubFolder',
-] as const;
-
 export function generateSpmtCsv(
-  mappings: ResolvedMapping[],
+  tasks: SpmtTask[],
   sites: SharePointSite[],
   tenantDomain: string
 ): string {
   const sitesById = new Map(sites.map((s) => [s.id, s]));
-  const lines: string[] = [SPMT_HEADERS.join(',')];
+  const lines: string[] = [];
 
-  for (const m of mappings) {
-    if (m.skipped) continue;
-    const site = sitesById.get(m.spSiteId);
+  for (const t of tasks) {
+    const site = sitesById.get(t.spSiteId);
     if (!site) continue;
     lines.push(
       [
-        csvField(m.resolvedSourcePath),
+        csvField(t.sourcePath),
         '', // SourceDocLib — file shares have no source library
         '', // SourceSubFolder
         csvField(siteUrl(tenantDomain, site.slug)),
         'Documents',
-        csvField(m.spFolderPath),
+        csvField(t.spFolderPath),
       ].join(',')
     );
   }

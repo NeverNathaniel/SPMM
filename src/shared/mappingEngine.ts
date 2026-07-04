@@ -28,6 +28,7 @@ import type {
   TechConfig,
   ValidationStatus,
 } from './types';
+import { ackPath } from './acks';
 import { destinationUrl } from './slug';
 
 export function detectPathType(path: string): PathType {
@@ -90,7 +91,9 @@ export function resolveMappings(
     sitesById: new Map(sites.map((s) => [s.id, s])),
     explicitByPath: new Map(explicitMappings.map((m) => [m.localPath, m])),
     skipped: new Set(skippedFolders),
-    acknowledged: new Set(acknowledgedFolders),
+    // Ack entries are namespaced kind:path keys — this field only reports
+    // "some warning on this folder was acknowledged".
+    acknowledged: new Set(acknowledgedFolders.map(ackPath)),
     config,
   };
 
@@ -128,6 +131,11 @@ function walk(
     out.push(buildResolved(node, inherited.mapping, childSpPath, false, ctx));
     next = { mapping: inherited.mapping, spFolderPath: childSpPath };
   }
+
+  // Skip excludes the whole branch (SPMT tasks are recursive, so a skipped
+  // folder cannot be carved out of its parent's migration any other way).
+  // Descendants stop inheriting; an explicit mapping below still re-roots.
+  if (ctx.skipped.has(node.path)) next = null;
 
   for (const child of node.children) {
     walk(child, next, ctx, out);
@@ -205,10 +213,6 @@ export function flattenTree(node: FolderNode): FolderNode[] {
   return out;
 }
 
-export function countFolders(roots: DirectoryRoot[]): number {
-  return roots.reduce((n, r) => n + flattenTree(r.tree).length, 0);
-}
-
 /**
  * Mapping state of a folder for the tree UI:
  * - 'explicit' / 'inherited' / 'unmapped' for the folder itself
@@ -223,28 +227,51 @@ export interface FolderMapState {
   split: boolean;
 }
 
-export function folderMapState(
-  node: FolderNode,
+/**
+ * Map states for every folder in every root, computed in one bottom-up pass.
+ * (Computing per row with a subtree flatten made large trees quadratic.)
+ */
+export function buildFolderMapStates(
+  roots: DirectoryRoot[],
   resolved: Map<string, ResolvedMapping>
-): FolderMapState {
-  const own = resolved.get(node.path);
-  const descendants = flattenTree(node).slice(1);
-  let mapped = 0;
-  let explicitDesc = 0;
-  for (const d of descendants) {
-    const r = resolved.get(d.path);
-    if (r) {
-      mapped++;
-      if (r.isExplicit) explicitDesc++;
-    }
-  }
-  const split = descendants.length > 0 && ((mapped > 0 && mapped < descendants.length) || (own != null && explicitDesc > 0));
+): Map<string, FolderMapState> {
+  const out = new Map<string, FolderMapState>();
 
-  if (!own) return { status: 'unmapped', siteId: null, spFolderPath: null, split: mapped > 0 };
-  return {
-    status: own.isExplicit ? 'explicit' : 'inherited',
-    siteId: own.spSiteId,
-    spFolderPath: own.spFolderPath,
-    split,
-  };
+  interface Agg {
+    descendants: number;
+    mapped: number;
+    explicit: number;
+  }
+
+  function visit(node: FolderNode): Agg {
+    const agg: Agg = { descendants: 0, mapped: 0, explicit: 0 };
+    for (const child of node.children) {
+      const c = visit(child);
+      const r = resolved.get(child.path);
+      agg.descendants += c.descendants + 1;
+      agg.mapped += c.mapped + (r ? 1 : 0);
+      agg.explicit += c.explicit + (r?.isExplicit ? 1 : 0);
+    }
+
+    const own = resolved.get(node.path);
+    const split =
+      agg.descendants > 0 &&
+      ((agg.mapped > 0 && agg.mapped < agg.descendants) || (own != null && agg.explicit > 0));
+
+    out.set(
+      node.path,
+      own
+        ? {
+            status: own.isExplicit ? 'explicit' : 'inherited',
+            siteId: own.spSiteId,
+            spFolderPath: own.spFolderPath,
+            split,
+          }
+        : { status: 'unmapped', siteId: null, spFolderPath: null, split: agg.mapped > 0 }
+    );
+    return agg;
+  }
+
+  for (const root of roots) visit(root.tree);
+  return out;
 }

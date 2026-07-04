@@ -104,6 +104,8 @@ function SpFolderRow({ site, node, depth, childNodes, sources }: RowProps) {
       onClick={() => setOpen((v) => !v)}
       className={`w-3 text-[10px] text-slate-400 ${childNodes.length ? '' : 'invisible'}`}
       title={open ? 'Collapse' : 'Expand'}
+      aria-label={open ? 'Collapse' : 'Expand'}
+      aria-expanded={open}
     >
       {open ? '▼' : '▶'}
     </button>
@@ -170,7 +172,7 @@ function SpFolderRow({ site, node, depth, childNodes, sources }: RowProps) {
       <span className="flex-1" />
 
       <button
-        className="opacity-0 group-hover:opacity-100 text-[11px] text-slate-500 border border-slate-300 rounded px-1.5 py-0.5 hover:bg-slate-100 disabled:opacity-30 whitespace-nowrap"
+        className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-[11px] text-slate-500 border border-slate-300 rounded px-1.5 py-0.5 hover:bg-slate-100 disabled:opacity-30 whitespace-nowrap"
         disabled={childBlocked}
         title={
           childBlocked
@@ -181,6 +183,24 @@ function SpFolderRow({ site, node, depth, childNodes, sources }: RowProps) {
       >
         + folder
       </button>
+
+      {folder && (
+        <button
+          className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-[11px] text-slate-500 border border-slate-300 rounded px-1.5 py-0.5 hover:bg-slate-100 whitespace-nowrap"
+          aria-label={`Options for ${folder.name}`}
+          aria-haspopup="menu"
+          title="Options"
+          // Keep the mousedown from reaching ContextMenu's outside-click
+          // listener, so clicking again toggles instead of reopening.
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            setMenu((m) => (m ? null : { x: r.left, y: r.bottom + 2 }));
+          }}
+        >
+          ⋯
+        </button>
+      )}
     </div>
   ) : (
     <div
@@ -272,6 +292,7 @@ function SiteCard({ site }: { site: SharePointSite }) {
         <button
           className="text-slate-300 hover:text-red-600 disabled:hover:text-slate-300 disabled:opacity-40"
           disabled={hasMappings}
+          aria-label={`Remove ${site.name}`}
           title={hasMappings ? 'Unmap all folders from this site first' : 'Remove site'}
           onClick={() => removeSite(site.id)}
         >
