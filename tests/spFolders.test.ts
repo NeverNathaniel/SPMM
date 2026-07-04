@@ -60,6 +60,16 @@ describe('renameSpFolder + remapAfterRename', () => {
     expect(remapped[1].spFolderPath).toBe('HR/Pay/2024');
     expect(remapped[2].spFolderPath).toBe('HR/Payroll'); // other site untouched
   });
+
+  it('does not rewrite sibling folders whose names merely share a prefix', () => {
+    const mappings: ExplicitMapping[] = [
+      { localPath: 'C:\\a', localFolderId: '1', spSiteId: 's1', spFolderPath: 'HR/Payroll2' },
+      { localPath: 'C:\\b', localFolderId: '2', spSiteId: 's1', spFolderPath: 'HR/Payroll2/2024' },
+    ];
+    const remapped = remapAfterRename(mappings, 's1', 'HR/Payroll', 'HR/Pay');
+    expect(remapped[0].spFolderPath).toBe('HR/Payroll2');
+    expect(remapped[1].spFolderPath).toBe('HR/Payroll2/2024');
+  });
 });
 
 describe('deleteSpFolder / spFolderInUse', () => {
@@ -70,6 +80,13 @@ describe('deleteSpFolder / spFolderInUse', () => {
     expect(spFolderInUse(mappings, 's1', 'HR')).toBe(true);
     expect(spFolderInUse(mappings, 's1', 'Ops')).toBe(false);
     expect(spFolderInUse(mappings, 's2', 'HR')).toBe(false);
+  });
+
+  it('does not match folders whose names merely share a prefix', () => {
+    const mappings: ExplicitMapping[] = [
+      { localPath: 'C:\\a', localFolderId: '1', spSiteId: 's1', spFolderPath: 'HR2/Payroll' },
+    ];
+    expect(spFolderInUse(mappings, 's1', 'HR')).toBe(false);
   });
 
   it('removes a subtree', () => {

@@ -6,6 +6,7 @@ import type {
   TechConfig,
 } from '../src/shared/types';
 import { DEFAULT_TECH_CONFIG } from '../src/shared/types';
+import { detectPathType } from '../src/shared/mappingEngine';
 
 let idCounter = 0;
 const nextId = () => `id-${++idCounter}`;
@@ -36,7 +37,7 @@ export function root(path: string, tree: FolderNode): DirectoryRoot {
   return {
     id: nextId(),
     path,
-    pathType: path.startsWith('\\\\') ? 'unc' : 'local',
+    pathType: detectPathType(path),
     tree,
     scannedAt: new Date().toISOString(),
   };
@@ -50,4 +51,5 @@ export function site(name: string, slug: string, folders: SPFolder[] = []): Shar
   return { id: nextId(), name, slug, color: '#2563eb', folders };
 }
 
-export const CONFIG: TechConfig = { ...DEFAULT_TECH_CONFIG, tenantDomain: 'contoso.sharepoint.com' };
+// A non-placeholder tenant — the contoso.sharepoint.com default hard-blocks export.
+export const CONFIG: TechConfig = { ...DEFAULT_TECH_CONFIG, tenantDomain: 'fabrikam.sharepoint.com' };

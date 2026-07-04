@@ -8,19 +8,27 @@
 
 import type { IneligibleFile, IneligibleReason } from './types';
 
-// '/' and '\' can't occur in a single path segment on Windows but are kept so
-// the rule also catches names arriving from session files or manual input.
-export const INVALID_CHARS = /[#%&*:<>?/\\{|}~"]/;
-export const RESERVED_NAMES = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i;
+// The invalid set for SharePoint Online / OneDrive per Microsoft's current
+// "Restrictions and limitations" doc: " * : < > ? / \ | only. Notably & { } ~
+// are fully supported, and # % are supported by default (a legacy tenant
+// setting can still block them — folders on such tenants must be renamed
+// manually). '/' and '\' can't occur in a single path segment on Windows but
+// are kept so the rule also catches names arriving from session files or
+// manual input.
+export const INVALID_CHARS = /["*:<>?/\\|]/;
+// CON, PRN, AUX, NUL, COM0–COM9, LPT0–LPT9 (bare or with any extension).
+export const RESERVED_NAMES = /^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\.|$)/i;
+// "_vti_" is disallowed anywhere in a file or folder name.
+export const RESERVED_SUBSTRINGS = /_vti_/i;
 export const LEADING_TRAILING = /^[ .]|[ .]$/; // starts/ends with space or period
-export const TEMP_FILES = /^~\$|\.tmp$|^\.DS_Store$|^thumbs\.db$|^desktop\.ini$/i;
+export const TEMP_FILES = /^~\$|\.tmp$|^\.lock$|^\.DS_Store$|^thumbs\.db$|^desktop\.ini$/i;
 
 export function classifyFile(filename: string): IneligibleReason | null {
   // Temp/lock detection first: "~$Report.docx" would otherwise never reach
   // the temp rule, and the actionable advice for the user differs (delete vs rename).
   if (TEMP_FILES.test(filename)) return 'temp-lock-file';
   if (INVALID_CHARS.test(filename)) return 'invalid-chars';
-  if (RESERVED_NAMES.test(filename)) return 'reserved-name';
+  if (RESERVED_NAMES.test(filename) || RESERVED_SUBSTRINGS.test(filename)) return 'reserved-name';
   if (LEADING_TRAILING.test(filename)) return 'leading-trailing';
   return null;
 }
@@ -28,7 +36,7 @@ export function classifyFile(filename: string): IneligibleReason | null {
 /** Folder names follow the same character rules but the temp rule doesn't apply. */
 export function classifyFolderName(name: string): IneligibleReason | null {
   if (INVALID_CHARS.test(name)) return 'invalid-chars';
-  if (RESERVED_NAMES.test(name)) return 'reserved-name';
+  if (RESERVED_NAMES.test(name) || RESERVED_SUBSTRINGS.test(name)) return 'reserved-name';
   if (LEADING_TRAILING.test(name)) return 'leading-trailing';
   return null;
 }

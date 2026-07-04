@@ -1,5 +1,5 @@
 /**
- * Derived state: resolved mappings + review summary.
+ * Derived state: resolved mappings + SPMT plan + review summary.
  *
  * Computed once per relevant store change and shared through context so that
  * every tree row reads the same memoised result (resolution is O(folders);
@@ -8,13 +8,20 @@
 
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { useAppStore } from './useAppStore';
-import { resolveMappings } from '../shared/mappingEngine';
+import {
+  buildFolderMapStates,
+  resolveMappings,
+  type FolderMapState,
+} from '../shared/mappingEngine';
+import { planSpmtTasks, type SpmtPlan } from '../shared/spmtPlan';
 import { buildReviewSummary, type ReviewSummary } from '../shared/review';
 import type { ResolvedMapping } from '../shared/types';
 
 export interface ResolvedState {
   list: ResolvedMapping[];
   byPath: Map<string, ResolvedMapping>;
+  mapStates: Map<string, FolderMapState>;
+  plan: SpmtPlan;
   summary: ReviewSummary;
 }
 
@@ -37,10 +44,14 @@ export function ResolvedProvider({ children }: { children: ReactNode }) {
       acknowledgedFolders,
       techConfig
     );
+    const byPath = new Map(list.map((m) => [m.localPath, m]));
+    const plan = planSpmtTasks(roots, byPath);
     return {
       list,
-      byPath: new Map(list.map((m) => [m.localPath, m])),
-      summary: buildReviewSummary(roots, list, acknowledgedFolders),
+      byPath,
+      mapStates: buildFolderMapStates(roots, byPath),
+      plan,
+      summary: buildReviewSummary(roots, list, acknowledgedFolders, techConfig, plan),
     };
   }, [roots, sites, explicitMappings, skippedFolders, acknowledgedFolders, techConfig]);
 

@@ -23,7 +23,9 @@ beforeEach(() => {
   fs.mkdirSync(path.join(tmp, '$RECYCLE.BIN'));
 
   for (let i = 0; i < 10; i++) fs.writeFileSync(path.join(f1, `file${i}.txt`), 'x');
-  fs.writeFileSync(path.join(f1, 'Report #Final.docx'), 'x');
+  // _vti_ is flagged on every platform's filesystem (unlike : | etc., which
+  // can't be created on Windows and would break the fixture there).
+  fs.writeFileSync(path.join(f1, 'report_vti_backup.docx'), 'x');
   fs.writeFileSync(path.join(f1, '~$Report.docx'), 'x');
   fs.writeFileSync(path.join(f1, '.dotfile'), 'x');
 
@@ -54,8 +56,56 @@ describe('scanDir', () => {
     const tree = scanDir(tmp);
     const folder1 = tree.children.find((c) => c.name === 'folder1')!;
     const reasons = Object.fromEntries(folder1.ineligibleFiles.map((f) => [f.filename, f.reason]));
-    expect(reasons['Report #Final.docx']).toBe('invalid-chars');
+    expect(reasons['report_vti_backup.docx']).toBe('reserved-name');
     expect(reasons['~$Report.docx']).toBe('temp-lock-file');
+  });
+
+  it('counts hidden/system entries it filters out', () => {
+    const tree = scanDir(tmp);
+    expect(tree.hiddenItemsSkipped).toBe(2); // .hidden + $RECYCLE.BIN
+    const folder1 = tree.children.find((c) => c.name === 'folder1')!;
+    expect(folder1.hiddenItemsSkipped).toBe(1); // .dotfile
+  });
+
+  it('caps the disclosure file list but keeps counting', () => {
+    const big = path.join(tmp, 'big');
+    fs.mkdirSync(big);
+    for (let i = 0; i < 510; i++) fs.writeFileSync(path.join(big, `f${String(i).padStart(4, '0')}.txt`), 'x');
+    const tree = scanDir(tmp);
+    const bigNode = tree.children.find((c) => c.name === 'big')!;
+    expect(bigNode.fileCount).toBe(510);
+    expect(bigNode.files).toHaveLength(500);
+    expect(bigNode.filesTruncated).toBe(true);
+  });
+
+  it('skips symlinks instead of following them', () => {
+    const target = path.join(tmp, 'folder1');
+    const link = path.join(tmp, 'folder2', 'looplink');
+    try {
+      fs.symlinkSync(target, link, 'dir');
+    } catch {
+      return; // e.g. Windows without symlink privilege — nothing to assert
+    }
+    const tree = scanDir(tmp);
+    const folder2 = tree.children.find((c) => c.name === 'folder2')!;
+    expect(folder2.children.map((c) => c.name)).toEqual(['sub1']);
+  });
+
+  it('keeps an unreadable directory as an empty node instead of aborting', () => {
+    if (process.platform === 'win32' || process.getuid?.() === 0) return; // chmod semantics differ
+    const locked = path.join(tmp, 'locked');
+    fs.mkdirSync(locked);
+    fs.writeFileSync(path.join(locked, 'secret.txt'), 'x');
+    fs.chmodSync(locked, 0o000);
+    try {
+      const tree = scanDir(tmp);
+      const lockedNode = tree.children.find((c) => c.name === 'locked')!;
+      expect(lockedNode).toBeDefined();
+      expect(lockedNode.fileCount).toBe(0);
+      expect(lockedNode.children).toEqual([]);
+    } finally {
+      fs.chmodSync(locked, 0o755);
+    }
   });
 
   it('captures the longest filename per folder', () => {

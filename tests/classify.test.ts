@@ -8,12 +8,23 @@ import {
 } from '../src/shared/classify';
 
 describe('classifyFile', () => {
-  it('flags invalid characters', () => {
-    expect(classifyFile('Report #Final.docx')).toBe('invalid-chars');
-    expect(classifyFile('Budget & Forecast.xlsx')).toBe('invalid-chars');
-    expect(classifyFile('50%.txt')).toBe('invalid-chars');
+  it('flags the characters SharePoint Online actually rejects', () => {
     expect(classifyFile('a:b.txt')).toBe('invalid-chars');
     expect(classifyFile('pipe|name.txt')).toBe('invalid-chars');
+    expect(classifyFile('star*.txt')).toBe('invalid-chars');
+    expect(classifyFile('what?.txt')).toBe('invalid-chars');
+    expect(classifyFile('quote".txt')).toBe('invalid-chars');
+    expect(classifyFile('less<more>.txt')).toBe('invalid-chars');
+  });
+
+  it('accepts characters that are valid in SharePoint Online (& { } ~ # %)', () => {
+    // These were rejected by SharePoint's legacy rules but are valid today —
+    // over-flagging them hard-blocked exports for common names like "R&D".
+    expect(classifyFile('Budget & Forecast.xlsx')).toBeNull();
+    expect(classifyFile('Report #Final.docx')).toBeNull();
+    expect(classifyFile('50%.txt')).toBeNull();
+    expect(classifyFile('Q1 {draft}.docx')).toBeNull();
+    expect(classifyFile('approx~value.txt')).toBeNull();
   });
 
   it('flags reserved device names', () => {
@@ -21,7 +32,14 @@ describe('classifyFile', () => {
     expect(classifyFile('con')).toBe('reserved-name');
     expect(classifyFile('LPT1.doc')).toBe('reserved-name');
     expect(classifyFile('COM9')).toBe('reserved-name');
+    expect(classifyFile('COM0')).toBe('reserved-name'); // COM0/LPT0 are reserved too
+    expect(classifyFile('LPT0.txt')).toBe('reserved-name');
     expect(classifyFile('CONSOLE.txt')).toBeNull(); // only exact device names
+  });
+
+  it('flags _vti_ anywhere in a name', () => {
+    expect(classifyFile('report_vti_backup.docx')).toBe('reserved-name');
+    expect(classifyFolderName('_vti_cnf')).toBe('reserved-name');
   });
 
   it('flags leading/trailing space or period', () => {
@@ -35,6 +53,7 @@ describe('classifyFile', () => {
     expect(classifyFile('build.tmp')).toBe('temp-lock-file');
     expect(classifyFile('.DS_Store')).toBe('temp-lock-file');
     expect(classifyFile('Thumbs.db')).toBe('temp-lock-file');
+    expect(classifyFile('.lock')).toBe('temp-lock-file');
   });
 
   it('passes clean names', () => {
@@ -45,9 +64,10 @@ describe('classifyFile', () => {
 
 describe('classifyFolderName', () => {
   it('applies the same character rules', () => {
-    expect(classifyFolderName('A&B')).toBe('invalid-chars');
+    expect(classifyFolderName('A|B')).toBe('invalid-chars');
     expect(classifyFolderName('Archive ')).toBe('leading-trailing');
     expect(classifyFolderName('Payroll')).toBeNull();
+    expect(classifyFolderName('R&D')).toBeNull(); // & is valid in SharePoint Online
   });
 });
 
@@ -68,7 +88,7 @@ describe('hidden/system filtering', () => {
 
 describe('reasonDetail', () => {
   it('lists the offending characters', () => {
-    expect(reasonDetail('Report #Final.docx', 'invalid-chars')).toBe('contains #');
-    expect(reasonDetail('a#b&c.txt', 'invalid-chars')).toBe('contains # &');
+    expect(reasonDetail('a:b.txt', 'invalid-chars')).toBe('contains :');
+    expect(reasonDetail('a:b|c.txt', 'invalid-chars')).toBe('contains : |');
   });
 });

@@ -190,22 +190,40 @@ describe('buildSitePreview — merges', () => {
 });
 
 describe('buildSitePreview — skipped folders', () => {
-  it('omits skipped folders but keeps path segments needed by exported descendants', () => {
+  it('omits skipped branches entirely (skip cascades — SPMT tasks are recursive)', () => {
     const preview = buildSitePreview(
       ops,
       resolve([mapping(ar.path, ar.id, ops.id, 'Projects')], [ar2024.path, ar2023.path])
     );
 
     const projects = child(preview.children, 'Projects');
-    // 2023 is a skipped leaf — gone entirely. 2024 is skipped but Q1 still
-    // migrates through it, so the segment remains as a sourceless ghost.
-    expect(names(projects.children)).toEqual(['2024']);
-    const segment = child(projects.children, '2024');
-    expect(segment.existing).toBe(false);
-    expect(segment.sources).toEqual([]);
-    expect(names(segment.children)).toEqual(['Q1']);
-    expect(child(segment.children, 'Q1').sources).toEqual([
-      { localPath: q1.path, localName: 'Q1', isExplicit: false },
+    // Both 2024 (with its Q1 subtree) and 2023 leave the plan — a skipped
+    // folder cannot be carved out of a recursive migration, so nothing
+    // beneath it migrates either.
+    expect(names(projects.children)).toEqual([]);
+    expect(projects.sources).toEqual([
+      { localPath: ar.path, localName: 'AR', isExplicit: true },
     ]);
+  });
+
+  it('an explicit mapping beneath a skipped ancestor still appears at its own destination', () => {
+    const preview = buildSitePreview(
+      ops,
+      resolve(
+        [
+          mapping(ar.path, ar.id, ops.id, 'Projects'),
+          mapping(q1.path, q1.id, ops.id, 'Templates'),
+        ],
+        [ar2024.path]
+      )
+    );
+
+    // Q1 re-roots itself under Templates even though its parent 2024 is skipped.
+    const templates = child(preview.children, 'Templates');
+    expect(templates.sources).toEqual([
+      { localPath: q1.path, localName: 'Q1', isExplicit: true },
+    ]);
+    // 2023 still inherits, but nothing ghosts through the skipped 2024.
+    expect(names(child(preview.children, 'Projects').children)).toEqual(['2023']);
   });
 });

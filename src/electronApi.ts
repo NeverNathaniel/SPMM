@@ -15,9 +15,18 @@ export interface SpmmApi {
   onScanProgress(cb: (p: ScanProgress) => void): () => void;
   loadSession(): Promise<SessionState | null>;
   saveSession(state: SessionState): Promise<{ ok: boolean; error?: string }>;
+  /** Synchronous save for beforeunload — async IPC can't complete there. */
+  saveSessionSync(state: SessionState): { ok: boolean; error?: string };
   clearSession(): Promise<void>;
+  /** settingsPin is never included — verify through verifySettingsPin. */
   getTechConfig(): Promise<TechConfig>;
-  saveTechConfig(cfg: TechConfig): Promise<{ ok: boolean; error?: string }>;
+  hasSettingsPin(): Promise<boolean>;
+  verifySettingsPin(pin: string): Promise<boolean>;
+  /**
+   * pinUpdate: undefined = keep the stored PIN, '' = clear it, any other
+   * string = set it. cfg.settingsPin itself is ignored by the main process.
+   */
+  saveTechConfig(cfg: TechConfig, pinUpdate?: string): Promise<{ ok: boolean; error?: string }>;
   exportFiles(payload: { csv: string; html: string; exportPathOverride?: string }): Promise<ExportResult>;
   showInFolder(target: string): Promise<void>;
   openExternal(url: string): Promise<void>;

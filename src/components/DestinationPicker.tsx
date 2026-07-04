@@ -4,6 +4,7 @@
  * destinations are shown disabled.
  */
 
+import { useEffect, useId, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { depthStatus } from '../shared/mappingEngine';
 import { listSpFolders } from '../shared/spFolders';
@@ -15,12 +16,42 @@ export default function DestinationPicker() {
   const requestMap = useAppStore((s) => s.requestMap);
   const close = useAppStore((s) => s.closeDestinationPicker);
 
+  const titleId = useId();
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  // Focus the safe action on open; restore focus to the opener on close.
+  useEffect(() => {
+    if (!target) return;
+    const previous = document.activeElement as HTMLElement | null;
+    cancelRef.current?.focus();
+    return () => previous?.focus();
+  }, [target]);
+
+  useEffect(() => {
+    if (!target) return;
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // A remap ConfirmDialog may be stacked above this picker — let its own
+      // Escape handler cancel just the confirmation, not both layers.
+      if (useAppStore.getState().pendingRemap) return;
+      close();
+    };
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  }, [target, close]);
+
   if (!target) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={close}>
-      <div className="card w-[30rem] max-h-[70vh] flex flex-col p-5" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-base font-semibold mb-1">Choose destination</h3>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="card w-[30rem] max-h-[70vh] flex flex-col p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 id={titleId} className="text-base font-semibold mb-1">Choose destination</h3>
         <p className="text-xs text-slate-500 mb-3 truncate" title={target.localPath}>
           for {target.localPath}
         </p>
@@ -65,7 +96,7 @@ export default function DestinationPicker() {
         </div>
 
         <div className="flex justify-end pt-3">
-          <button className="btn-secondary" onClick={close}>Cancel</button>
+          <button ref={cancelRef} className="btn-secondary" onClick={close}>Cancel</button>
         </div>
       </div>
     </div>

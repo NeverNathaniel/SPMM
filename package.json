@@ -1,25 +1,35 @@
 {
   "name": "migration-mapper",
   "productName": "Migration Mapper",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Visually map local folder structures to SharePoint Online destinations and export SPMT-compatible migration files",
   "type": "module",
   "main": "dist-electron/main.js",
   "private": true,
+  "license": "MIT",
+  "author": "Nathan Sol",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NeverNathaniel/SPMM.git"
+  },
+  "homepage": "https://github.com/NeverNathaniel/SPMM#readme",
+  "bugs": {
+    "url": "https://github.com/NeverNathaniel/SPMM/issues"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "eslint .",
     "dist": "npm run build && electron-builder --win"
   },
-  "dependencies": {
-    "@dnd-kit/core": "^6.1.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "zustand": "^5.0.2"
-  },
   "devDependencies": {
+    "@dnd-kit/core": "^6.1.0",
+    "@eslint/js": "^9",
     "@types/node": "^22.10.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
@@ -27,11 +37,18 @@
     "autoprefixer": "^10.4.20",
     "electron": "^42.4.0",
     "electron-builder": "^26.15.2",
+    "eslint": "^9",
+    "eslint-plugin-react-hooks": "^7",
+    "globals": "^16",
     "postcss": "^8.4.49",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3",
+    "typescript-eslint": "^8",
     "vite": "^8.0.16",
     "vite-plugin-electron": "^0.28.8",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.8",
+    "zustand": "^5.0.2"
   }
 }

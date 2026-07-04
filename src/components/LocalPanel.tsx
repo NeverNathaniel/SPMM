@@ -13,7 +13,6 @@ import { useDraggable } from '@dnd-kit/core';
 import type { DirectoryRoot, FolderNode, SharePointSite } from '../shared/types';
 import { useAppStore } from '../store/useAppStore';
 import { useResolved } from '../store/useResolved';
-import { folderMapState } from '../shared/mappingEngine';
 import { REASON_LABELS, reasonDetail } from '../shared/classify';
 import type { ResolvedMapping } from '../shared/types';
 import ContextMenu, { type MenuItem } from './ContextMenu';
@@ -39,13 +38,18 @@ function FolderRow({ node, depth }: RowProps) {
   const toggleExpanded = useAppStore((s) => s.toggleExpanded);
   const unmap = useAppStore((s) => s.unmap);
   const openPicker = useAppStore((s) => s.openDestinationPicker);
-  const { byPath } = useResolved();
+  const { byPath, mapStates } = useResolved();
 
   const [issuesOpen, setIssuesOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
-  const mapState = folderMapState(node, byPath);
+  const mapState = mapStates.get(node.path) ?? {
+    status: 'unmapped' as const,
+    siteId: null,
+    spFolderPath: null,
+    split: false,
+  };
   const resolved: ResolvedMapping | undefined = byPath.get(node.path);
   const site = mapState.siteId ? sites.find((s) => s.id === mapState.siteId) : null;
   const color = site?.color ?? UNMAPPED_COLOR;
@@ -118,6 +122,8 @@ function FolderRow({ node, depth }: RowProps) {
           }}
           onPointerDown={(e) => e.stopPropagation()}
           className={`w-4 text-xs text-slate-400 ${node.children.length ? '' : 'invisible'}`}
+          aria-label={`${expanded ? 'Collapse' : 'Expand'} ${node.name}`}
+          aria-expanded={expanded}
         >
           {expanded ? '▼' : '▶'}
         </button>
@@ -231,6 +237,8 @@ function FolderRow({ node, depth }: RowProps) {
 
 function RootSection({ root }: { root: DirectoryRoot }) {
   const removeRoot = useAppStore((s) => s.removeRoot);
+  const rescanRoot = useAppStore((s) => s.rescanRoot);
+  const scanning = useAppStore((s) => s.scanning);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   return (
@@ -249,13 +257,25 @@ function RootSection({ root }: { root: DirectoryRoot }) {
             </button>
           </span>
         ) : (
-          <button
-            className="opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-red-600 focus:opacity-100"
-            title="Remove this root (mappings under it are removed too)"
-            onClick={() => setConfirmingRemove(true)}
-          >
-            ✕
-          </button>
+          <span className="flex gap-2 normal-case font-normal">
+            <button
+              className="opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-blue-600 focus:opacity-100"
+              title="Rescan this root — mappings for folders that still exist are kept"
+              aria-label={`Rescan ${root.path}`}
+              disabled={!!scanning}
+              onClick={() => void rescanRoot(root.id)}
+            >
+              ⟳
+            </button>
+            <button
+              className="opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-red-600 focus:opacity-100"
+              title="Remove this root (mappings under it are removed too)"
+              aria-label={`Remove ${root.path}`}
+              onClick={() => setConfirmingRemove(true)}
+            >
+              ✕
+            </button>
+          </span>
         )}
       </div>
       <FolderRow node={root.tree} depth={0} />
@@ -267,6 +287,7 @@ export default function LocalPanel() {
   const roots = useAppStore((s) => s.roots);
   const scanning = useAppStore((s) => s.scanning);
   const addDirectory = useAppStore((s) => s.addDirectory);
+  const cancelScan = useAppStore((s) => s.cancelScan);
 
   return (
     <div className="flex-1 min-w-0 card m-2 mr-1 p-3 overflow-y-auto">
@@ -275,8 +296,20 @@ export default function LocalPanel() {
       </div>
 
       {scanning && (
-        <div className="rounded bg-blue-50 border border-blue-200 text-blue-700 text-xs px-3 py-2 mb-2">
-          Scanning {scanning.rootPath}… {scanning.folderCount} folders found
+        <div className="flex items-center gap-2 rounded bg-blue-50 border border-blue-200 text-blue-700 text-xs px-3 py-2 mb-2">
+          <span className="min-w-0 flex-1">
+            <span className="block">
+              Scanning {scanning.rootPath}… {scanning.folderCount} folders found
+            </span>
+            {scanning.currentPath && (
+              <span className="block truncate text-blue-400" title={scanning.currentPath}>
+                {scanning.currentPath}
+              </span>
+            )}
+          </span>
+          <button className="btn-secondary !py-0.5 !px-2 whitespace-nowrap" onClick={cancelScan}>
+            Cancel
+          </button>
         </div>
       )}
 

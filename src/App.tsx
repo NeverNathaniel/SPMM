@@ -32,6 +32,7 @@ export default function App() {
   const init = useAppStore((s) => s.init);
   const initialized = useAppStore((s) => s.initialized);
   const addDirectory = useAppStore((s) => s.addDirectory);
+  const scanning = useAppStore((s) => s.scanning);
   const allowAddSites = useAppStore((s) => s.techConfig.allowUserAddSites);
   const resumeBanner = useAppStore((s) => s.resumeBanner);
   const dismissBanner = useAppStore((s) => s.dismissBanner);
@@ -40,7 +41,6 @@ export default function App() {
   const pendingRemap = useAppStore((s) => s.pendingRemap);
   const confirmPendingRemap = useAppStore((s) => s.confirmPendingRemap);
   const cancelPendingRemap = useAppStore((s) => s.cancelPendingRemap);
-  const toast = useAppStore((s) => s.toast);
 
   const [showAddSite, setShowAddSite] = useState(false);
   const [dragLabel, setDragLabel] = useState<string | null>(null);
@@ -50,6 +50,14 @@ export default function App() {
   useEffect(() => {
     void init();
   }, [init]);
+
+  // Flush the debounced session save before the window closes — otherwise up
+  // to 2s of mapping work is silently lost.
+  useEffect(() => {
+    const flush = () => useAppStore.getState().flushSessionSync();
+    window.addEventListener('beforeunload', flush);
+    return () => window.removeEventListener('beforeunload', flush);
+  }, []);
 
   if (!hasElectron()) {
     return (
@@ -82,11 +90,7 @@ export default function App() {
       | { siteId: string; spFolderPath: string; depth: number; blocked: boolean }
       | undefined;
     if (!src || !dst) return;
-    if (dst.blocked) {
-      const blockAt = useAppStore.getState().techConfig.depthBlockAt;
-      toast('error', `Cannot map here — SharePoint destination exceeds maximum folder depth of ${blockAt - 1}.`);
-      return;
-    }
+    // Depth gating (including the blocked-target toast) lives in requestMap.
     requestMap(src.localPath, src.localFolderId, dst.siteId, dst.spFolderPath);
   };
 
@@ -96,7 +100,14 @@ export default function App() {
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-3 py-2 bg-white border-b border-slate-200">
         <span className="font-semibold text-sm mr-2">Migration Mapper</span>
-        <button className="btn-secondary" onClick={() => void addDirectory()}>📁 Add Directory</button>
+        <button
+          className="btn-secondary"
+          disabled={!!scanning}
+          title={scanning ? 'A scan is already running' : undefined}
+          onClick={() => void addDirectory()}
+        >
+          📁 Add Directory
+        </button>
         {allowAddSites && (
           <button className="btn-secondary" onClick={() => setShowAddSite(true)}>+ Add SP Site</button>
         )}

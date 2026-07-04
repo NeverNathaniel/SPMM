@@ -1,18 +1,21 @@
 /**
  * Screen 2 — Review & Export.
  *
- * Five sections in order: hard blocks, path length warnings (per-folder ack),
+ * Sections in order: tenant-domain / conflict / hard blocks, path length
+ * warnings (per-folder ack), split-folder file warnings (per-folder ack),
  * ineligible files (per-folder-group ack), depth warnings (informational),
  * unmapped folders (Map Now / Skip). Export unlocks only when no hard blocks
  * remain and every acknowledgment box is checked.
  */
 
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { useResolved } from '../store/useResolved';
+import { ackKey } from '../shared/acks';
 import { generateSpmtCsv } from '../shared/csv';
 import { generateHtmlReport } from '../shared/htmlReport';
 import { REASON_LABELS } from '../shared/classify';
+import { flattenTree } from '../shared/mappingEngine';
 import { api } from '../electronApi';
 import type { ExportResult, FolderNode } from '../shared/types';
 
@@ -52,21 +55,30 @@ export default function ReviewScreen() {
   const toast = useAppStore((s) => s.toast);
   const roots = useAppStore((s) => s.roots);
 
-  const { list, byPath, summary } = useResolved();
+  const { list, byPath, plan, summary } = useResolved();
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
   const [exporting, setExporting] = useState(false);
 
   const ackedSet = new Set(acknowledged);
 
+  // One flatten for the whole screen instead of one per table row.
+  const nodesByPath = useMemo(() => {
+    const map = new Map<string, FolderNode>();
+    for (const r of roots) for (const n of flattenTree(r.tree)) map.set(n.path, n);
+    return map;
+  }, [roots]);
+
   const doExport = async () => {
     setExporting(true);
     try {
-      const csv = generateSpmtCsv(list, sites, techConfig.tenantDomain);
+      const csv = generateSpmtCsv(plan.tasks, sites, techConfig.tenantDomain);
       const html = generateHtmlReport({
         roots,
         sites,
         resolved: list,
         config: techConfig,
+        summary,
+        plan,
         exportedAt: new Date(),
       });
       const result = await api().exportFiles({
@@ -77,9 +89,13 @@ export default function ReviewScreen() {
       setExportResult(result);
       if (result.ok) {
         toast('success', 'Export complete — session retained');
+        if (result.warning) toast('warning', result.warning);
       } else {
         toast('error', `Export failed: ${result.error}`);
       }
+    } catch (err) {
+      setExportResult(null);
+      toast('error', `Export failed: ${(err as Error).message}`);
     } finally {
       setExporting(false);
     }
@@ -91,6 +107,9 @@ export default function ReviewScreen() {
     return m && !m.skipped;
   });
 
+  const blockCount =
+    summary.hardBlocks.length + summary.conflicts.length + (summary.tenantDomainIssue ? 1 : 0);
+
   return (
     <div className="flex-1 overflow-y-auto p-4 max-w-5xl mx-auto w-full">
       <div className="flex items-center justify-between mb-4">
@@ -100,11 +119,12 @@ export default function ReviewScreen() {
 
       {/* Progress summary */}
       <div className="card p-4 mb-4">
-        <div className="grid grid-cols-5 gap-3 text-center mb-3">
+        <div className="grid grid-cols-6 gap-3 text-center mb-3">
           {[
             [summary.totalFolders, 'Folders scanned'],
             [summary.explicitCount, 'Explicitly mapped'],
             [summary.inheritedCount, 'Inherited'],
+            [summary.taskCount, 'SPMT tasks'],
             [summary.unmappedFolders.length, 'Unmapped'],
             [summary.skippedCount, 'Skipped'],
           ].map(([v, label]) => (
@@ -121,6 +141,32 @@ export default function ReviewScreen() {
           {summary.progressPct}% of folders have a resolved destination
         </div>
       </div>
+
+      {/* 0 — Tenant domain */}
+      {summary.tenantDomainIssue && (
+        <SectionCard tone="red" title="🚫 Tenant Domain">
+          <p className="text-xs text-red-600">{summary.tenantDomainIssue}</p>
+          <button className="text-xs text-blue-600 hover:underline mt-2" onClick={() => setScreen('settings')}>
+            Open Settings
+          </button>
+        </SectionCard>
+      )}
+
+      {/* 0b — Source conflicts (overlapping roots) */}
+      {summary.conflicts.length > 0 && (
+        <SectionCard tone="red" title={`🚫 Conflicting Sources (${summary.conflicts.length}) — the same folder resolves to two destinations`}>
+          <p className="text-xs text-slate-500 mb-2">
+            These folders are covered by more than one migration task with different destinations —
+            usually caused by overlapping directory roots. Remove one of the overlapping roots or
+            align the mappings.
+          </p>
+          <ul className="text-xs space-y-1">
+            {summary.conflicts.map((c) => (
+              <li key={c.sourcePath} className="break-all text-red-600">{c.sourcePath}</li>
+            ))}
+          </ul>
+        </SectionCard>
+      )}
 
       {/* 1 — Hard blocks */}
       {summary.hardBlocks.length > 0 && (
@@ -141,7 +187,9 @@ export default function ReviewScreen() {
                   <td className="py-1.5 text-red-600">
                     {m.depthStatus === 'block'
                       ? `Destination depth ${m.spDestinationDepth} exceeds the limit`
-                      : 'Folder name is invalid in SharePoint — rename it in Explorer'}
+                      : m.hasIneligibleFolderName
+                      ? 'Folder name is invalid in SharePoint — rename it in Explorer'
+                      : `Path is ${m.worstCasePathLength} chars — over the ${techConfig.pathBlockAt}-char limit, SPMT will fail`}
                   </td>
                 </tr>
               ))}
@@ -150,11 +198,11 @@ export default function ReviewScreen() {
         </SectionCard>
       )}
 
-      {/* 2 — Path length */}
-      {(summary.pathWarnings.length > 0 || summary.pathBlocks.length > 0) && (
+      {/* 2 — Path length warnings (amber only; over-limit paths are hard blocks) */}
+      {summary.pathWarnings.length > 0 && (
         <SectionCard
           tone="amber"
-          title={`⚠ Path Length Warnings (${summary.pathWarnings.length + summary.pathBlocks.length}) — acknowledge each folder to proceed`}
+          title={`⚠ Path Length Warnings (${summary.pathWarnings.length}) — acknowledge each folder to proceed`}
         >
           <table className="w-full text-xs">
             <thead>
@@ -164,33 +212,66 @@ export default function ReviewScreen() {
                 <th className="py-1 pr-3">Destination path</th>
                 <th className="py-1 pr-3">Longest filename</th>
                 <th className="py-1 pr-3">Length</th>
-                <th className="py-1">Status</th>
               </tr>
             </thead>
             <tbody>
-              {[...summary.pathBlocks, ...summary.pathWarnings].map((m) => {
-                const node = roots
-                  .flatMap((r) => [r.tree, ...flattenForLookup(r.tree)])
-                  .find((n) => n.path === m.localPath);
-                return (
-                  <tr key={m.localPath} className="border-t border-slate-100">
-                    <td className="py-1.5 pr-2">
-                      <input
-                        type="checkbox"
-                        checked={ackedSet.has(m.localPath)}
-                        onChange={() => toggleAcknowledged(m.localPath)}
-                      />
-                    </td>
-                    <td className="py-1.5 pr-3 break-all">{m.localPath}</td>
-                    <td className="py-1.5 pr-3 break-all">{m.resolvedTargetUrl}</td>
-                    <td className="py-1.5 pr-3 break-all">{node?.longestFilename || '—'}</td>
-                    <td className="py-1.5 pr-3">{m.worstCasePathLength}</td>
-                    <td className={`py-1.5 font-medium ${m.pathLengthStatus === 'block' ? 'text-red-600' : 'text-amber-600'}`}>
-                      {m.pathLengthStatus === 'block' ? `✖ over ${techConfig.pathBlockAt}` : '⚠ warning'}
-                    </td>
-                  </tr>
-                );
-              })}
+              {summary.pathWarnings.map((m) => (
+                <tr key={m.localPath} className="border-t border-slate-100">
+                  <td className="py-1.5 pr-2">
+                    <input
+                      type="checkbox"
+                      aria-label={`Acknowledge path length warning for ${m.localPath}`}
+                      checked={ackedSet.has(ackKey('path', m.localPath))}
+                      onChange={() => toggleAcknowledged('path', m.localPath)}
+                    />
+                  </td>
+                  <td className="py-1.5 pr-3 break-all">{m.localPath}</td>
+                  <td className="py-1.5 pr-3 break-all">{m.resolvedTargetUrl}</td>
+                  <td className="py-1.5 pr-3 break-all">{nodesByPath.get(m.localPath)?.longestFilename || '—'}</td>
+                  <td className="py-1.5 pr-3">{m.worstCasePathLength}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </SectionCard>
+      )}
+
+      {/* 2b — Split folders whose direct files no task migrates */}
+      {summary.splitFileWarnings.length > 0 && (
+        <SectionCard
+          tone="amber"
+          title={`⚠ Files Not Covered by Any Task (${summary.splitFileWarnings.length}) — acknowledge each folder to proceed`}
+        >
+          <p className="text-xs text-slate-500 mb-2">
+            A skipped or re-mapped subfolder forced these folders to be split into per-subfolder
+            SPMT tasks, and SPMT cannot copy a folder's direct files without recursing. These files
+            must be moved manually (or restructure the mapping to avoid the split).
+          </p>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-slate-500">
+                <th className="py-1 pr-2">Ack</th>
+                <th className="py-1 pr-3">Local folder</th>
+                <th className="py-1 pr-3">Planned destination</th>
+                <th className="py-1">Direct files affected</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.splitFileWarnings.map((w) => (
+                <tr key={w.localPath} className="border-t border-slate-100">
+                  <td className="py-1.5 pr-2">
+                    <input
+                      type="checkbox"
+                      aria-label={`Acknowledge uncovered files in ${w.localPath}`}
+                      checked={ackedSet.has(ackKey('split', w.localPath))}
+                      onChange={() => toggleAcknowledged('split', w.localPath)}
+                    />
+                  </td>
+                  <td className="py-1.5 pr-3 break-all">{w.localPath}</td>
+                  <td className="py-1.5 pr-3 break-all">{byPath.get(w.localPath)?.resolvedTargetUrl ?? '—'}</td>
+                  <td className="py-1.5">{w.fileCount}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </SectionCard>
@@ -207,8 +288,8 @@ export default function ReviewScreen() {
               <label className="flex items-center gap-2 text-xs font-medium">
                 <input
                   type="checkbox"
-                  checked={ackedSet.has(f.path)}
-                  onChange={() => toggleAcknowledged(f.path)}
+                  checked={ackedSet.has(ackKey('inelig', f.path))}
+                  onChange={() => toggleAcknowledged('inelig', f.path)}
                 />
                 <span className="break-all">{f.path}</span>
                 <span className="text-slate-400">({f.ineligibleFiles.length} file{f.ineligibleFiles.length > 1 ? 's' : ''})</span>
@@ -264,28 +345,52 @@ export default function ReviewScreen() {
         </SectionCard>
       )}
 
+      {/* 5b — Excluded by skip (informational) */}
+      {summary.excludedBySkip.length > 0 && (
+        <SectionCard tone="plain" title={`Excluded by skip (${summary.excludedBySkip.length}) — informational`}>
+          <p className="text-xs text-slate-500">
+            {summary.excludedBySkip.length} folder(s) have no destination because an ancestor is
+            skipped. They are excluded from the migration on purpose — map one explicitly if it
+            should still migrate somewhere.
+          </p>
+        </SectionCard>
+      )}
+
+      {/* 6 — Hidden items (informational) */}
+      {summary.hiddenItemsSkipped > 0 && (
+        <SectionCard tone="plain" title={`Hidden / system items (${summary.hiddenItemsSkipped}) — informational`}>
+          <p className="text-xs text-slate-500">
+            {summary.hiddenItemsSkipped} hidden or system item(s) were filtered out at scan time and
+            are not part of this plan. SPMT's recursive tasks may still migrate them unless they
+            carry the hidden attribute on disk.
+          </p>
+        </SectionCard>
+      )}
+
       {/* Mapping preview */}
       <SectionCard tone="plain" title="Full Mapping Preview">
         {sites.map((site) => {
-          const rows = list.filter((m) => m.spSiteId === site.id && !m.skipped);
+          // Skipped rows stay visible (greyed) so Skip can be undone here.
+          const rows = list.filter((m) => m.spSiteId === site.id);
+          const activeRows = rows.filter((m) => !m.skipped);
           if (!rows.length) return null;
           return (
             <div key={site.id} className="mb-4 last:mb-0">
               <div className="flex items-center gap-2 text-xs font-semibold mb-1">
                 <span className="w-2.5 h-2.5 rounded" style={{ backgroundColor: site.color }} />
-                {site.name} ({rows.length})
+                {site.name} ({activeRows.length}{rows.length > activeRows.length ? ` + ${rows.length - activeRows.length} skipped` : ''})
               </div>
               <div className="max-h-56 overflow-y-auto border border-slate-100 rounded">
                 <table className="w-full text-xs">
                   <tbody>
                     {rows.map((m) => (
-                      <tr key={m.localPath} className="border-t border-slate-50 first:border-t-0">
-                        <td className="py-1 px-2 break-all w-[45%]">{m.resolvedSourcePath}</td>
+                      <tr key={m.localPath} className={`border-t border-slate-50 first:border-t-0 ${m.skipped ? 'opacity-50' : ''}`}>
+                        <td className={`py-1 px-2 break-all w-[45%] ${m.skipped ? 'line-through' : ''}`}>{m.resolvedSourcePath}</td>
                         <td className="py-1 px-1 text-slate-300">→</td>
-                        <td className="py-1 px-2 break-all">{m.resolvedTargetUrl}</td>
+                        <td className={`py-1 px-2 break-all ${m.skipped ? 'line-through' : ''}`}>{m.resolvedTargetUrl}</td>
                         <td className="py-1 px-2 whitespace-nowrap">
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${m.isExplicit ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-600'}`}>
-                            {m.isExplicit ? 'explicit' : 'inherited'}
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${m.skipped ? 'bg-slate-100 text-slate-500' : m.isExplicit ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-600'}`}>
+                            {m.skipped ? 'skipped' : m.isExplicit ? 'explicit' : 'inherited'}
                           </span>
                         </td>
                         <td className="py-1 px-2">
@@ -304,7 +409,7 @@ export default function ReviewScreen() {
             </div>
           );
         })}
-        {list.filter((m) => !m.skipped).length === 0 && (
+        {list.length === 0 && (
           <p className="text-sm text-slate-400">Nothing mapped yet.</p>
         )}
       </SectionCard>
@@ -317,8 +422,8 @@ export default function ReviewScreen() {
           onClick={() => void doExport()}
           title={
             summary.exportReady
-              ? 'Write migration-mapping.csv and migration-summary.html'
-              : summary.hardBlocks.length
+              ? `Write migration-mapping.csv (${summary.taskCount} task${summary.taskCount === 1 ? '' : 's'}) and migration-summary.html`
+              : blockCount
               ? 'Resolve hard blocks first'
               : summary.unacknowledgedPaths.length
               ? `${summary.unacknowledgedPaths.length} acknowledgment(s) outstanding`
@@ -329,9 +434,9 @@ export default function ReviewScreen() {
         </button>
         {!summary.exportReady && (
           <span className="text-xs text-slate-500">
-            {summary.hardBlocks.length > 0 && `${summary.hardBlocks.length} hard block(s). `}
+            {blockCount > 0 && `${blockCount} hard block(s). `}
             {summary.unacknowledgedPaths.length > 0 && `${summary.unacknowledgedPaths.length} unacknowledged warning(s). `}
-            {summary.hardBlocks.length === 0 && summary.unacknowledgedPaths.length === 0 && 'Map at least one folder.'}
+            {blockCount === 0 && summary.unacknowledgedPaths.length === 0 && 'Map at least one folder.'}
           </span>
         )}
         {exportResult?.ok && (
@@ -354,12 +459,4 @@ export default function ReviewScreen() {
       </div>
     </div>
   );
-}
-
-function flattenForLookup(node: FolderNode): FolderNode[] {
-  const out: FolderNode[] = [];
-  for (const c of node.children) {
-    out.push(c, ...flattenForLookup(c));
-  }
-  return out;
 }

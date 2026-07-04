@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { slugFromSiteName, siteUrl } from '../shared/slug';
 import { api } from '../electronApi';
@@ -7,16 +7,35 @@ export default function AddSiteModal({ onClose }: { onClose: () => void }) {
   const techConfig = useAppStore((s) => s.techConfig);
   const addSite = useAppStore((s) => s.addSite);
 
+  const titleId = useId();
+  const nameRef = useRef<HTMLInputElement>(null);
+
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
-  const [slugTouched, setSlugTouched] = useState(false);
 
-  const effectiveSlug = slugTouched && slug ? slug : slugFromSiteName(name);
+  // What addSite receives is always what the user sees: the typed slug, or —
+  // when the field is empty — the auto-slug shown as its placeholder.
+  const autoSlug = slugFromSiteName(name);
+  const effectiveSlug = slug || autoSlug;
+
+  // Focus the name field on open; restore focus to the opener on close.
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    nameRef.current?.focus();
+    return () => previous?.focus();
+  }, []);
+
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  }, [onClose]);
 
   const submit = (siteName: string, siteSlug?: string) => {
     if (!siteName.trim()) return;
-    addSite(siteName, siteSlug);
-    onClose();
+    // addSite returns false on rejection (it already toasts) — keep the modal
+    // open so the input isn't lost.
+    if (addSite(siteName, siteSlug)) onClose();
   };
 
   const requestChange = () => {
@@ -29,8 +48,14 @@ export default function AddSiteModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="card w-[30rem] p-5" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-base font-semibold mb-4">Add SharePoint Site</h3>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="card w-[30rem] p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 id={titleId} className="text-base font-semibold mb-4">Add SharePoint Site</h3>
 
         <label className="block text-xs font-medium text-slate-500 mb-1">Tenant domain</label>
         <div className="flex items-center gap-2 mb-3">
@@ -44,7 +69,7 @@ export default function AddSiteModal({ onClose }: { onClose: () => void }) {
 
         <label className="block text-xs font-medium text-slate-500 mb-1">Site name</label>
         <input
-          autoFocus
+          ref={nameRef}
           className="input mb-3"
           placeholder="e.g. Contoso HR"
           value={name}
@@ -55,15 +80,12 @@ export default function AddSiteModal({ onClose }: { onClose: () => void }) {
         <label className="block text-xs font-medium text-slate-500 mb-1">URL slug</label>
         <input
           className="input mb-1"
-          placeholder="Auto-generated from the site name"
-          value={slugTouched ? slug : effectiveSlug}
-          onChange={(e) => {
-            setSlugTouched(true);
-            setSlug(e.target.value.replace(/[^A-Za-z0-9_-]/g, ''));
-          }}
+          placeholder={autoSlug || 'Auto-generated from the site name'}
+          value={slug}
+          onChange={(e) => setSlug(e.target.value.replace(/[^A-Za-z0-9_-]/g, ''))}
         />
         <div className="text-[11px] text-slate-400 mb-4 truncate">
-          {effectiveSlug ? siteUrl(techConfig.tenantDomain, effectiveSlug) : ' '}
+          {effectiveSlug ? siteUrl(techConfig.tenantDomain, effectiveSlug) : ' '}
         </div>
 
         {techConfig.quickAddPresets.length > 0 && (
