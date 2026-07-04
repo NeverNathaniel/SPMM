@@ -56,8 +56,6 @@ A pre-flight summary: what's mapped, inherited, unmapped, and skipped; ineligibl
 
 ![Review and export](assets/review-export.png)
 
-*This screenshot predates the v0.2 export rework — current builds additionally show the SPMT task count, `/Shared Documents/` destination URLs, and the split-folder / conflict / tenant-domain gating sections.*
-
 ## How it works
 
 ### The mapping model
