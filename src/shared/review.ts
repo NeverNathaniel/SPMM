@@ -22,7 +22,7 @@ export interface ReviewSummary {
 
   hardBlocks: ResolvedMapping[];
   pathWarnings: ResolvedMapping[]; // amber, need per-folder ack
-  pathBlocks: ResolvedMapping[]; // red, need ack AND are hard blocks? no — see plan
+  pathBlocks: ResolvedMapping[]; // red, need per-folder ack (not a hard block — see below)
   ineligibleFolders: FolderNode[]; // need per-folder-group ack
   depthWarnings: ResolvedMapping[]; // informational
 

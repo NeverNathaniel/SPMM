@@ -13,7 +13,6 @@ import { useDraggable } from '@dnd-kit/core';
 import type { DirectoryRoot, FolderNode, SharePointSite } from '../shared/types';
 import { useAppStore } from '../store/useAppStore';
 import { useResolved } from '../store/useResolved';
-import { folderMapState } from '../shared/mappingEngine';
 import { REASON_LABELS, reasonDetail } from '../shared/classify';
 import type { ResolvedMapping } from '../shared/types';
 import ContextMenu, { type MenuItem } from './ContextMenu';
@@ -39,13 +38,18 @@ function FolderRow({ node, depth }: RowProps) {
   const toggleExpanded = useAppStore((s) => s.toggleExpanded);
   const unmap = useAppStore((s) => s.unmap);
   const openPicker = useAppStore((s) => s.openDestinationPicker);
-  const { byPath } = useResolved();
+  const { byPath, mapStates } = useResolved();
 
   const [issuesOpen, setIssuesOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
-  const mapState = folderMapState(node, byPath);
+  const mapState = mapStates.get(node.path) ?? {
+    status: 'unmapped' as const,
+    siteId: null,
+    spFolderPath: null,
+    split: false,
+  };
   const resolved: ResolvedMapping | undefined = byPath.get(node.path);
   const site = mapState.siteId ? sites.find((s) => s.id === mapState.siteId) : null;
   const color = site?.color ?? UNMAPPED_COLOR;
@@ -267,6 +271,7 @@ export default function LocalPanel() {
   const roots = useAppStore((s) => s.roots);
   const scanning = useAppStore((s) => s.scanning);
   const addDirectory = useAppStore((s) => s.addDirectory);
+  const cancelScan = useAppStore((s) => s.cancelScan);
 
   return (
     <div className="flex-1 min-w-0 card m-2 mr-1 p-3 overflow-y-auto">
@@ -275,8 +280,13 @@ export default function LocalPanel() {
       </div>
 
       {scanning && (
-        <div className="rounded bg-blue-50 border border-blue-200 text-blue-700 text-xs px-3 py-2 mb-2">
-          Scanning {scanning.rootPath}… {scanning.folderCount} folders found
+        <div className="flex items-center gap-2 rounded bg-blue-50 border border-blue-200 text-blue-700 text-xs px-3 py-2 mb-2">
+          <span className="flex-1 break-all">
+            Scanning {scanning.rootPath}… {scanning.folderCount} folders found
+          </span>
+          <button className="btn-secondary !py-0.5 !px-2 text-xs" onClick={() => void cancelScan()}>
+            Cancel
+          </button>
         </div>
       )}
 

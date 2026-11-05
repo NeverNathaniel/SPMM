@@ -61,11 +61,16 @@ tests/               Vitest suites for everything in src/shared and scanDir
   SharePoint merges them; skipped folders drop out exactly as they do from
   the CSV (`src/shared/sitePreview.ts`).
 - **Session** auto-saves to `%APPDATA%/MigrationMapper/session.json`
-  (2s debounce, atomic write). Relaunching shows a resume banner with
-  **Start Fresh**.
-- **Technician config** is read from `tech-config.json` next to the installed
+  (2s debounce, atomic write; pending changes are flushed synchronously when
+  the window closes). Relaunching shows a resume banner with **Start Fresh**.
+- **Directory roots** can't overlap: loading a folder that is already loaded,
+  or that contains / sits inside a loaded root, is refused (it would put the
+  same folders in the CSV twice). A running scan can be cancelled.
+- **Technician config** lives in `tech-config.json` next to the installed
   executable (falling back to `resources/`, then userData; project root in
-  dev). Settings screen is optionally PIN-protected.
+  dev). Saves go to the first writable location; loads use the most recently
+  written candidate, so a read-only pre-baked file doesn't shadow later
+  saves. Settings screen is optionally PIN-protected.
 - **Validation**: destination depth warn/block (default 2/3, measured relative
   to `Documents/`), worst-case URL length warn/block (default 256/400 using
   the longest filename captured at scan time), ineligible file/folder name
@@ -73,8 +78,9 @@ tests/               Vitest suites for everything in src/shared and scanDir
   hard blocks; everything else is acknowledge-to-proceed.
 - **Exports** are written to `%APPDATA%/MigrationMapper/exports/<timestamp>/`
   (or the configured override): `migration-mapping.csv` (one SPMT row per
-  resolved mapping, explicit + inherited; skipped folders omitted; UNC/local
-  source paths preserved verbatim) and `migration-summary.html`. Exporting
+  resolved mapping, explicit + inherited; no header row, matching SPMT's
+  bulk-upload format; skipped folders omitted; UNC/local source paths
+  preserved verbatim) and `migration-summary.html`. Exporting
   does not clear the session.
 
 ## Design decisions

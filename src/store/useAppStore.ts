@@ -21,6 +21,7 @@ import { nextSiteColor } from '../shared/colors';
 import { slugFromSiteName } from '../shared/slug';
 import {
   removeExplicitMapping,
+  rootsOverlap,
   setExplicitMapping,
   spFolderDepth,
   depthStatus,
@@ -79,11 +80,13 @@ interface AppStore {
 
   // directories
   addDirectory(): Promise<void>;
+  cancelScan(): Promise<void>;
   removeRoot(rootId: string): void;
   toggleExpanded(path: string): void;
 
   // sites & SP folders
-  addSite(name: string, slug?: string): void;
+  /** Returns false (after toasting why) when the site could not be added. */
+  addSite(name: string, slug?: string): boolean;
   removeSite(siteId: string): void;
   createSpFolder(siteId: string, parentPath: string, name: string): void;
   renameSpFolderAction(siteId: string, folderPath: string, newName: string): void;
@@ -107,34 +110,62 @@ interface AppStore {
   toast(kind: Toast['kind'], message: string): void;
   dismissToast(id: number): void;
   updateTechConfig(cfg: TechConfig): Promise<void>;
+  /** Synchronously persist pending changes (window close / reload). */
+  flushSave(): void;
 }
 
 let toastId = 0;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+/** Bumped on every change; a save only reports 'saved' if nothing changed meanwhile. */
+let changeSeq = 0;
 
 export const useAppStore = create<AppStore>((set, get) => {
+  function snapshot(): SessionState {
+    const s = get();
+    return {
+      roots: s.roots,
+      sharePointSites: s.sharePointSites,
+      explicitMappings: s.explicitMappings,
+      skippedFolders: s.skippedFolders,
+      acknowledgedFolders: s.acknowledgedFolders,
+      savedAt: new Date().toISOString(),
+    };
+  }
+
   /** Debounced (2s) session auto-save of the persisted slices. */
   function touch() {
+    changeSeq++;
     set({ saveStatus: 'dirty' });
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => {
-      const s = get();
-      const session: SessionState = {
-        roots: s.roots,
-        sharePointSites: s.sharePointSites,
-        explicitMappings: s.explicitMappings,
-        skippedFolders: s.skippedFolders,
-        acknowledgedFolders: s.acknowledgedFolders,
-        savedAt: new Date().toISOString(),
-      };
+      saveTimer = null;
+      const seq = changeSeq;
+      const session = snapshot();
       set({ saveStatus: 'saving' });
       try {
         const res = await api().saveSession(session);
+        // A newer change is pending — its own save will settle the status.
+        if (seq !== changeSeq) return;
         set(res.ok ? { saveStatus: 'saved', lastSavedAt: session.savedAt } : { saveStatus: 'error' });
       } catch {
-        set({ saveStatus: 'error' });
+        if (seq === changeSeq) set({ saveStatus: 'error' });
       }
     }, 2000);
+  }
+
+  function seededSites(cfg: TechConfig): SharePointSite[] {
+    const used: string[] = [];
+    return cfg.preSeededSites.map((p) => {
+      const color = nextSiteColor(used);
+      used.push(color);
+      return {
+        id: crypto.randomUUID(),
+        name: p.name,
+        slug: p.slug || slugFromSiteName(p.name),
+        color,
+        folders: [],
+      };
+    });
   }
 
   /** Prune mappings/skips/acks that reference folders no longer in any tree. */
@@ -179,22 +210,8 @@ export const useAppStore = create<AppStore>((set, get) => {
       const cfg = await api().getTechConfig();
       const session = await api().loadSession();
 
-      let sites: SharePointSite[] = session?.sharePointSites ?? [];
       // Pre-seeded sites load on first launch (no prior session).
-      if (!session && cfg.preSeededSites.length) {
-        const used: string[] = [];
-        sites = cfg.preSeededSites.map((p) => {
-          const color = nextSiteColor(used);
-          used.push(color);
-          return {
-            id: crypto.randomUUID(),
-            name: p.name,
-            slug: p.slug || slugFromSiteName(p.name),
-            color,
-            folders: [],
-          };
-        });
-      }
+      const sites: SharePointSite[] = session ? session.sharePointSites ?? [] : seededSites(cfg);
 
       // Auto-expand the first 2 levels of each restored tree.
       const expanded: Record<string, boolean> = {};
@@ -221,50 +238,49 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
 
     async startFresh() {
+      // Cancel any pending debounced save so it can't resurrect the old session.
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = null;
+      changeSeq++;
       await api().clearSession();
-      const cfg = get().techConfig;
       set({
         roots: [],
-        sharePointSites: [],
+        // Re-seed configured sites after a reset, same as first launch.
+        sharePointSites: seededSites(get().techConfig),
         explicitMappings: [],
         skippedFolders: [],
         acknowledgedFolders: [],
         expanded: {},
         resumeBanner: null,
+        pendingRemap: null,
+        destinationPickerFor: null,
         screen: 'map',
       });
-      // Re-seed configured sites after a reset, same as first launch.
-      if (cfg.preSeededSites.length) {
-        const used: string[] = [];
-        set({
-          sharePointSites: cfg.preSeededSites.map((p) => {
-            const color = nextSiteColor(used);
-            used.push(color);
-            return {
-              id: crypto.randomUUID(),
-              name: p.name,
-              slug: p.slug || slugFromSiteName(p.name),
-              color,
-              folders: [],
-            };
-          }),
-        });
-      }
       touch();
     },
 
     async addDirectory() {
+      if (get().scanning) return; // one scan at a time
       const picked = await api().pickDirectory();
       if (!picked.length) return;
 
+      // 'clear-on-load' replaces the previous roots once per pick, so a
+      // multi-select keeps every folder chosen in this dialog.
+      if (get().techConfig.sessionBehavior === 'clear-on-load' && get().roots.length) {
+        set({ roots: [], explicitMappings: [], skippedFolders: [], acknowledgedFolders: [], expanded: {} });
+        touch();
+      }
+
       for (const dir of picked) {
-        const s = get();
-        if (s.roots.some((r) => r.path === dir)) {
-          get().toast('warning', `${dir} is already loaded`);
+        const clash = get().roots.find((r) => rootsOverlap(r.path, dir));
+        if (clash) {
+          get().toast(
+            'warning',
+            clash.path.toLowerCase() === dir.toLowerCase()
+              ? `${dir} is already loaded`
+              : `${dir} overlaps ${clash.path}, which is already loaded — remove it first to load this folder`
+          );
           continue;
-        }
-        if (s.techConfig.sessionBehavior === 'clear-on-load' && s.roots.length) {
-          set({ roots: [], explicitMappings: [], skippedFolders: [], acknowledgedFolders: [] });
         }
         set({ scanning: { rootPath: dir, folderCount: 0 } });
         const off = api().onScanProgress((p) => {
@@ -278,14 +294,23 @@ export const useAppStore = create<AppStore>((set, get) => {
             set({ roots: [...get().roots, result.root], expanded });
             get().toast('success', `Scanned ${dir}`);
             touch();
+          } else if (result.cancelled) {
+            get().toast('info', `Scan of ${dir} cancelled`);
+            break; // cancelling abandons the rest of a multi-select too
           } else {
             get().toast('error', `Scan failed: ${result.error}`);
           }
+        } catch (err) {
+          get().toast('error', `Scan failed: ${(err as Error).message}`);
         } finally {
           off();
           set({ scanning: null });
         }
       }
+    },
+
+    async cancelScan() {
+      await api().cancelScan();
     },
 
     removeRoot(rootId) {
@@ -303,11 +328,11 @@ export const useAppStore = create<AppStore>((set, get) => {
       const finalSlug = (slug || slugFromSiteName(name)).trim();
       if (!name.trim() || !finalSlug) {
         get().toast('error', 'Site name is required');
-        return;
+        return false;
       }
       if (s.sharePointSites.some((x) => x.slug.toLowerCase() === finalSlug.toLowerCase())) {
         get().toast('error', `A site with URL /sites/${finalSlug} already exists`);
-        return;
+        return false;
       }
       const site: SharePointSite = {
         id: crypto.randomUUID(),
@@ -318,6 +343,7 @@ export const useAppStore = create<AppStore>((set, get) => {
       };
       set({ sharePointSites: [...s.sharePointSites, site] });
       touch();
+      return true;
     },
 
     removeSite(siteId) {
@@ -414,6 +440,11 @@ export const useAppStore = create<AppStore>((set, get) => {
 
       const existing = s.explicitMappings.find((m) => m.localPath === localPath);
       const next: PendingMap = { localPath, localFolderId, spSiteId, spFolderPath };
+      if (existing && existing.spSiteId === spSiteId && existing.spFolderPath === spFolderPath) {
+        // Already mapped exactly here — nothing to replace.
+        set({ destinationPickerFor: null });
+        return;
+      }
       if (existing) {
         const site = s.sharePointSites.find((x) => x.id === existing.spSiteId);
         const dest = site
@@ -502,6 +533,15 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     dismissToast(id) {
       set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
+    },
+
+    flushSave() {
+      if (!saveTimer || !hasElectron()) return;
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      const session = snapshot();
+      const res = api().saveSessionSync(session);
+      if (res.ok) set({ saveStatus: 'saved', lastSavedAt: session.savedAt });
     },
 
     async updateTechConfig(cfg) {

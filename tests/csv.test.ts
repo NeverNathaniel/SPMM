@@ -27,12 +27,13 @@ describe('generateSpmtCsv', () => {
     const csv = generateSpmtCsv(resolved, [hrSite], CONFIG.tenantDomain);
     const lines = csv.trim().split('\r\n');
 
-    expect(lines[0]).toBe('Source,SourceDocLib,SourceSubFolder,TargetWeb,TargetDocLib,TargetSubFolder');
-    expect(lines[1]).toBe(
+    // No header row — SPMT treats every line as a migration task.
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toBe(
       'C:\\HR\\Payroll,,,https://contoso.sharepoint.com/sites/HR,Documents,Payroll'
     );
     // Inherited row is spelled out explicitly for SPMT.
-    expect(lines[2]).toBe(
+    expect(lines[1]).toBe(
       'C:\\HR\\Payroll\\2024,,,https://contoso.sharepoint.com/sites/HR,Documents,Payroll/2024'
     );
   });
@@ -60,5 +61,9 @@ describe('generateSpmtCsv', () => {
     );
     const csv = generateSpmtCsv(resolved, [hrSite], CONFIG.tenantDomain);
     expect(csv).toContain('\\\\SERVER\\Accounting\\AR,,,');
+  });
+
+  it('produces an empty file when nothing migrates', () => {
+    expect(generateSpmtCsv([], [hrSite], CONFIG.tenantDomain)).toBe('');
   });
 });

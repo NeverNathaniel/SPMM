@@ -153,6 +153,8 @@ export interface ScanResult {
   ok: boolean;
   root?: DirectoryRoot;
   error?: string;
+  /** True when the scan was cancelled (or superseded) rather than failing */
+  cancelled?: boolean;
 }
 
 export interface ExportResult {

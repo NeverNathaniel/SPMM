@@ -20,6 +20,11 @@ export function readJson<T>(filePath: string): T | null {
 export function writeJsonAtomic(filePath: string, data: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
-  fs.renameSync(tmp, filePath);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tmp, filePath);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true }); // don't leave orphaned temp files behind
+    throw err;
+  }
 }

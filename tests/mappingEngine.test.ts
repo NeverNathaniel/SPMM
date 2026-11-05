@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildFolderMapStates,
   depthStatus,
   detectPathType,
+  flattenTree,
   folderMapState,
   resolveMappings,
   resolveMappingsByPath,
+  rootsOverlap,
   spFolderDepth,
   worstCasePathLength,
 } from '../src/shared/mappingEngine';
@@ -192,6 +195,56 @@ describe('folderMapState (tree UI)', () => {
     );
     expect(folderMapState(invoices, resolved).status).toBe('inherited');
     expect(folderMapState(ap, resolved).status).toBe('explicit');
+  });
+});
+
+describe('buildFolderMapStates', () => {
+  it('matches folderMapState for every folder', () => {
+    const scenarios: ExplicitMapping[][] = [
+      [],
+      [mapping(ar.path, ar.id, ops.id, '')],
+      [mapping(ap.path, ap.id, ops.id, '')],
+      [mapping(acctTree.path, acctTree.id, ops.id, ''), mapping(ap.path, ap.id, ops.id, 'Projects')],
+    ];
+    for (const explicit of scenarios) {
+      const resolved = resolveMappingsByPath(roots, sites, explicit, [], [], CONFIG);
+      const states = buildFolderMapStates(roots, resolved);
+      for (const node of roots.flatMap((r) => flattenTree(r.tree))) {
+        expect(states.get(node.path)).toEqual(folderMapState(node, resolved));
+      }
+    }
+  });
+});
+
+describe('flattenTree', () => {
+  it('returns nodes in depth-first pre-order', () => {
+    expect(flattenTree(acctTree).map((n) => n.path)).toEqual(
+      [acctTree, ...acctTree.children.flatMap((c) => flattenTree(c))].map((n) => n.path)
+    );
+  });
+
+  it('handles very wide trees without overflowing the stack', () => {
+    const kids = Array.from({ length: 200_000 }, (_, i) => folder(`C:\\Wide\\f${i}`));
+    const wide = folder('C:\\Wide', [folder('C:\\Wide\\inner', kids)]);
+    expect(flattenTree(wide)).toHaveLength(200_002);
+  });
+});
+
+describe('rootsOverlap', () => {
+  it('detects identical roots case-insensitively and ignoring trailing slashes', () => {
+    expect(rootsOverlap('C:\\Data', 'c:\\data\\')).toBe(true);
+    expect(rootsOverlap('\\\\SERVER\\Share', '\\\\server\\share')).toBe(true);
+  });
+
+  it('detects nested roots in either direction', () => {
+    expect(rootsOverlap('C:\\Data', 'C:\\Data\\HR')).toBe(true);
+    expect(rootsOverlap('C:\\Data\\HR', 'C:\\Data')).toBe(true);
+    expect(rootsOverlap('C:\\', 'C:\\Data')).toBe(true);
+  });
+
+  it('does not treat sibling prefixes as nested', () => {
+    expect(rootsOverlap('C:\\Data', 'C:\\Data2')).toBe(false);
+    expect(rootsOverlap('C:\\Data', 'D:\\Data')).toBe(false);
   });
 });
 

@@ -34,6 +34,28 @@ export function detectPathType(path: string): PathType {
   return path.startsWith('\\\\') ? 'unc' : 'local';
 }
 
+/** Windows-style comparison key: separators unified, no trailing slash, case-folded. */
+function pathKey(p: string): string {
+  const unified = p.replace(/\//g, '\\');
+  const trimmed = unified.length > 3 ? unified.replace(/\\+$/, '') : unified; // keep "C:\\"
+  return trimmed.toLowerCase();
+}
+
+/**
+ * True when two scan roots are the same folder or one contains the other.
+ * Overlapping roots would put the same folder in two trees, producing
+ * duplicate CSV rows (the same source migrated twice) and colliding
+ * path-keyed mappings. Windows paths are case-insensitive.
+ */
+export function rootsOverlap(a: string, b: string): boolean {
+  const ka = pathKey(a);
+  const kb = pathKey(b);
+  if (ka === kb) return true;
+  const within = (inner: string, outer: string) =>
+    inner.startsWith(outer.endsWith('\\') ? outer : `${outer}\\`);
+  return within(ka, kb) || within(kb, ka);
+}
+
 export function spFolderDepth(spFolderPath: string): number {
   if (!spFolderPath) return 0; // Documents/ root
   return spFolderPath.split('/').filter(Boolean).length;
@@ -198,10 +220,20 @@ export function removeExplicitMapping(
   return mappings.filter((m) => m.localPath !== localPath);
 }
 
-/** All folder nodes of a tree, flattened depth-first. */
+/**
+ * All folder nodes of a tree, flattened depth-first (pre-order).
+ * Iterative: spreading a large subtree into push() (or recursing per level
+ * with array copies) overflows the call stack on file shares with 100k+
+ * folders.
+ */
 export function flattenTree(node: FolderNode): FolderNode[] {
-  const out: FolderNode[] = [node];
-  for (const child of node.children) out.push(...flattenTree(child));
+  const out: FolderNode[] = [];
+  const stack: FolderNode[] = [node];
+  while (stack.length) {
+    const n = stack.pop()!;
+    out.push(n);
+    for (let i = n.children.length - 1; i >= 0; i--) stack.push(n.children[i]);
+  }
   return out;
 }
 
@@ -223,28 +255,64 @@ export interface FolderMapState {
   split: boolean;
 }
 
-export function folderMapState(
-  node: FolderNode,
-  resolved: Map<string, ResolvedMapping>
-): FolderMapState {
-  const own = resolved.get(node.path);
-  const descendants = flattenTree(node).slice(1);
-  let mapped = 0;
-  let explicitDesc = 0;
-  for (const d of descendants) {
-    const r = resolved.get(d.path);
-    if (r) {
-      mapped++;
-      if (r.isExplicit) explicitDesc++;
-    }
-  }
-  const split = descendants.length > 0 && ((mapped > 0 && mapped < descendants.length) || (own != null && explicitDesc > 0));
+interface DescendantCounts {
+  total: number;
+  mapped: number;
+  explicit: number;
+}
 
+function stateFrom(
+  own: ResolvedMapping | undefined,
+  { total, mapped, explicit }: DescendantCounts
+): FolderMapState {
   if (!own) return { status: 'unmapped', siteId: null, spFolderPath: null, split: mapped > 0 };
+  const split = total > 0 && ((mapped > 0 && mapped < total) || explicit > 0);
   return {
     status: own.isExplicit ? 'explicit' : 'inherited',
     siteId: own.spSiteId,
     spFolderPath: own.spFolderPath,
     split,
   };
+}
+
+/** Map state of a single folder. O(subtree) — prefer buildFolderMapStates for whole trees. */
+export function folderMapState(
+  node: FolderNode,
+  resolved: Map<string, ResolvedMapping>
+): FolderMapState {
+  const counts: DescendantCounts = { total: 0, mapped: 0, explicit: 0 };
+  for (const d of flattenTree(node).slice(1)) {
+    counts.total++;
+    const r = resolved.get(d.path);
+    if (r) {
+      counts.mapped++;
+      if (r.isExplicit) counts.explicit++;
+    }
+  }
+  return stateFrom(resolved.get(node.path), counts);
+}
+
+/**
+ * Map state for every folder of every root in a single post-order pass, so
+ * the tree UI doesn't re-walk each row's subtree (quadratic on large trees).
+ */
+export function buildFolderMapStates(
+  roots: DirectoryRoot[],
+  resolved: Map<string, ResolvedMapping>
+): Map<string, FolderMapState> {
+  const out = new Map<string, FolderMapState>();
+  const visit = (node: FolderNode): DescendantCounts => {
+    const counts: DescendantCounts = { total: 0, mapped: 0, explicit: 0 };
+    for (const child of node.children) {
+      const c = visit(child);
+      const r = resolved.get(child.path);
+      counts.total += c.total + 1;
+      counts.mapped += c.mapped + (r ? 1 : 0);
+      counts.explicit += c.explicit + (r?.isExplicit ? 1 : 0);
+    }
+    out.set(node.path, stateFrom(resolved.get(node.path), counts));
+    return counts;
+  };
+  for (const root of roots) visit(root.tree);
+  return out;
 }

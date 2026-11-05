@@ -52,7 +52,7 @@ export default function ReviewScreen() {
   const toast = useAppStore((s) => s.toast);
   const roots = useAppStore((s) => s.roots);
 
-  const { list, byPath, summary } = useResolved();
+  const { list, byPath, nodesByPath, summary } = useResolved();
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
   const [exporting, setExporting] = useState(false);
 
@@ -169,9 +169,7 @@ export default function ReviewScreen() {
             </thead>
             <tbody>
               {[...summary.pathBlocks, ...summary.pathWarnings].map((m) => {
-                const node = roots
-                  .flatMap((r) => [r.tree, ...flattenForLookup(r.tree)])
-                  .find((n) => n.path === m.localPath);
+                const node = nodesByPath.get(m.localPath);
                 return (
                   <tr key={m.localPath} className="border-t border-slate-100">
                     <td className="py-1.5 pr-2">
@@ -354,12 +352,4 @@ export default function ReviewScreen() {
       </div>
     </div>
   );
-}
-
-function flattenForLookup(node: FolderNode): FolderNode[] {
-  const out: FolderNode[] = [];
-  for (const c of node.children) {
-    out.push(c, ...flattenForLookup(c));
-  }
-  return out;
 }
