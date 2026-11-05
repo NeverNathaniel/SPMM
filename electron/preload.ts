@@ -16,6 +16,7 @@ const api = {
   },
   loadSession: () => ipcRenderer.invoke('load-session'),
   saveSession: (state: unknown) => ipcRenderer.invoke('save-session', state),
+  saveSessionSync: (state: unknown) => ipcRenderer.sendSync('save-session-sync', state),
   clearSession: () => ipcRenderer.invoke('clear-session'),
   getTechConfig: () => ipcRenderer.invoke('get-tech-config'),
   saveTechConfig: (cfg: unknown) => ipcRenderer.invoke('save-tech-config', cfg),

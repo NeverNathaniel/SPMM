@@ -8,13 +8,22 @@
 
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { useAppStore } from './useAppStore';
-import { resolveMappings } from '../shared/mappingEngine';
+import {
+  buildFolderMapStates,
+  flattenTree,
+  resolveMappings,
+  type FolderMapState,
+} from '../shared/mappingEngine';
 import { buildReviewSummary, type ReviewSummary } from '../shared/review';
-import type { ResolvedMapping } from '../shared/types';
+import type { FolderNode, ResolvedMapping } from '../shared/types';
 
 export interface ResolvedState {
   list: ResolvedMapping[];
   byPath: Map<string, ResolvedMapping>;
+  /** Tree-UI state (explicit/inherited/unmapped + split) for every folder */
+  mapStates: Map<string, FolderMapState>;
+  /** Every scanned folder keyed by local path */
+  nodesByPath: Map<string, FolderNode>;
   summary: ReviewSummary;
 }
 
@@ -37,9 +46,12 @@ export function ResolvedProvider({ children }: { children: ReactNode }) {
       acknowledgedFolders,
       techConfig
     );
+    const byPath = new Map(list.map((m) => [m.localPath, m]));
     return {
       list,
-      byPath: new Map(list.map((m) => [m.localPath, m])),
+      byPath,
+      mapStates: buildFolderMapStates(roots, byPath),
+      nodesByPath: new Map(roots.flatMap((r) => flattenTree(r.tree)).map((n) => [n.path, n])),
       summary: buildReviewSummary(roots, list, acknowledgedFolders),
     };
   }, [roots, sites, explicitMappings, skippedFolders, acknowledgedFolders, techConfig]);

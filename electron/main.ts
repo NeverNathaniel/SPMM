@@ -53,12 +53,27 @@ function techConfigCandidates(): string[] {
   ];
 }
 
+/**
+ * Load the most recently written candidate. Saving falls back to a later
+ * candidate when an earlier one isn't writable (e.g. a read-only pre-baked
+ * file in Program Files), so "first one that exists" would keep returning the
+ * stale pre-baked file and silently discard the technician's saved changes.
+ */
 function loadTechConfig(): TechConfig {
+  let newest: { cfg: Partial<TechConfig>; mtime: number } | null = null;
   for (const candidate of techConfigCandidates()) {
+    let mtime: number;
+    try {
+      mtime = fs.statSync(candidate).mtimeMs;
+    } catch {
+      continue;
+    }
     const cfg = readJson<Partial<TechConfig>>(candidate);
-    if (cfg) return { ...DEFAULT_TECH_CONFIG, ...cfg };
+    if (cfg && typeof cfg === 'object' && (!newest || mtime > newest.mtime)) {
+      newest = { cfg, mtime };
+    }
   }
-  return { ...DEFAULT_TECH_CONFIG };
+  return { ...DEFAULT_TECH_CONFIG, ...(newest?.cfg ?? {}) };
 }
 
 function saveTechConfig(cfg: TechConfig): { ok: boolean; error?: string } {
@@ -87,8 +102,19 @@ ipcMain.handle('pick-directory', async (): Promise<string[]> => {
 });
 
 ipcMain.handle('scan-directory', (_evt, rootPath: string): Promise<ScanResult> => {
-  return new Promise((resolve) => {
-    activeScan?.terminate();
+  return new Promise((rawResolve) => {
+    // Every exit path must settle the promise — a terminated worker (cancel,
+    // or superseded by a newer scan) emits only 'exit', and an unsettled
+    // promise would leave the renderer stuck in its scanning state forever.
+    let settled = false;
+    const resolve = (r: ScanResult) => {
+      if (!settled) {
+        settled = true;
+        rawResolve(r);
+      }
+    };
+
+    void activeScan?.terminate();
     const worker = new Worker(path.join(__dirname, 'scanWorker.js'), {
       workerData: { rootPath },
     });
@@ -117,6 +143,7 @@ ipcMain.handle('scan-directory', (_evt, rootPath: string): Promise<ScanResult> =
     worker.on('error', (err) => resolve({ ok: false, error: err.message }));
     worker.on('exit', () => {
       if (activeScan === worker) activeScan = null;
+      resolve({ ok: false, cancelled: true, error: 'Scan cancelled' });
     });
   });
 });
@@ -134,6 +161,17 @@ ipcMain.handle('save-session', (_evt, state: SessionState): { ok: boolean; error
     return { ok: true };
   } catch (err) {
     return { ok: false, error: (err as Error).message };
+  }
+});
+
+// Synchronous variant used from the renderer's beforeunload handler, where an
+// async invoke may not be delivered before the window is torn down.
+ipcMain.on('save-session-sync', (evt, state: SessionState) => {
+  try {
+    writeJsonAtomic(sessionFile(), state);
+    evt.returnValue = { ok: true };
+  } catch (err) {
+    evt.returnValue = { ok: false, error: (err as Error).message };
   }
 });
 
@@ -176,8 +214,12 @@ ipcMain.handle('show-in-folder', (_evt, target: string) => {
   shell.showItemInFolder(target);
 });
 
+function isSafeExternalUrl(url: string): boolean {
+  return url.startsWith('mailto:') || url.startsWith('https://');
+}
+
 ipcMain.handle('open-external', (_evt, url: string) => {
-  if (url.startsWith('mailto:') || url.startsWith('https://')) shell.openExternal(url);
+  if (isSafeExternalUrl(url)) void shell.openExternal(url);
 });
 
 ipcMain.handle('copy-to-clipboard', async (_evt, text: string) => {
@@ -201,6 +243,16 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+
+  // The renderer is a local single-page app: never let it navigate away or
+  // spawn new windows (which would run arbitrary content next to the bridge).
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (evt, url) => {
+    if (url !== win?.webContents.getURL()) evt.preventDefault();
   });
 
   if (isDev) {

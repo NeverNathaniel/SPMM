@@ -32,6 +32,7 @@ export default function App() {
   const init = useAppStore((s) => s.init);
   const initialized = useAppStore((s) => s.initialized);
   const addDirectory = useAppStore((s) => s.addDirectory);
+  const scanning = useAppStore((s) => s.scanning);
   const allowAddSites = useAppStore((s) => s.techConfig.allowUserAddSites);
   const resumeBanner = useAppStore((s) => s.resumeBanner);
   const dismissBanner = useAppStore((s) => s.dismissBanner);
@@ -50,6 +51,14 @@ export default function App() {
   useEffect(() => {
     void init();
   }, [init]);
+
+  // Auto-save is debounced by 2s; make sure closing the window inside that
+  // window doesn't drop the user's latest changes.
+  useEffect(() => {
+    const flush = () => useAppStore.getState().flushSave();
+    window.addEventListener('beforeunload', flush);
+    return () => window.removeEventListener('beforeunload', flush);
+  }, []);
 
   if (!hasElectron()) {
     return (
@@ -96,7 +105,9 @@ export default function App() {
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-3 py-2 bg-white border-b border-slate-200">
         <span className="font-semibold text-sm mr-2">Migration Mapper</span>
-        <button className="btn-secondary" onClick={() => void addDirectory()}>📁 Add Directory</button>
+        <button className="btn-secondary" disabled={!!scanning} onClick={() => void addDirectory()}>
+          📁 Add Directory
+        </button>
         {allowAddSites && (
           <button className="btn-secondary" onClick={() => setShowAddSite(true)}>+ Add SP Site</button>
         )}

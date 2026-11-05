@@ -97,3 +97,33 @@ describe('buildReviewSummary', () => {
 function child0Path() {
   return 'C:\\HR\\Payroll';
 }
+
+describe('stranded files gating', () => {
+  const otherSite = site('Ops', 'Ops');
+  const sub = folder('C:\\Data\\Sub');
+  const top = folder('C:\\Data', [sub], { fileCount: 4 });
+  const roots = [root('C:\\Data', top)];
+  const mappings: ExplicitMapping[] = [
+    { localPath: top.path, localFolderId: top.id, spSiteId: hrSite.id, spFolderPath: '' },
+    { localPath: sub.path, localFolderId: sub.id, spSiteId: otherSite.id, spFolderPath: '' },
+  ];
+  const summarize = (acked: string[]) =>
+    buildReviewSummary(
+      roots,
+      resolveMappings(roots, [hrSite, otherSite], mappings, [], acked, CONFIG),
+      acked
+    );
+
+  it('requires acknowledging a folder whose own files cannot be in the CSV', () => {
+    const summary = summarize([]);
+    expect(summary.strandedFolders.map((s) => s.node.path)).toEqual([top.path]);
+    expect(summary.csvRowCount).toBe(1); // only Sub
+    expect(summary.unacknowledgedPaths).toContain(top.path);
+    expect(summary.exportReady).toBe(false);
+  });
+
+  it('unlocks export once acknowledged', () => {
+    const summary = summarize([top.path]);
+    expect(summary.exportReady).toBe(true);
+  });
+});

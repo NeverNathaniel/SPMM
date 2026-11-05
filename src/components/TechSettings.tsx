@@ -8,6 +8,30 @@ import { useState, type ReactNode } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import type { TechConfig } from '../shared/types';
 
+const formatSites = (sites: TechConfig['preSeededSites']) =>
+  sites.map((s) => (s.slug ? `${s.name}|${s.slug}` : s.name)).join('\n');
+
+const parseSites = (text: string): TechConfig['preSeededSites'] =>
+  text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const [name, slug] = l.split('|').map((p) => p.trim());
+      return slug ? { name, slug } : { name };
+    })
+    .filter((s) => s.name);
+
+const parsePresets = (text: string): string[] =>
+  text.split(',').map((p) => p.trim()).filter(Boolean);
+
+/** Returns a user-facing problem with the threshold settings, or null. */
+function thresholdError(cfg: TechConfig): string | null {
+  if (cfg.depthWarnAt >= cfg.depthBlockAt) return 'Depth "warn at" must be lower than "block at".';
+  if (cfg.pathWarnAt >= cfg.pathBlockAt) return 'Path length "warn over" must be lower than "block over".';
+  return null;
+}
+
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div className="mb-4">
@@ -27,6 +51,31 @@ export default function TechSettings() {
   const [pinEntry, setPinEntry] = useState('');
   const [pinError, setPinError] = useState(false);
   const [draft, setDraft] = useState<TechConfig>({ ...techConfig });
+  // List fields are edited as raw text and parsed on save. Deriving the input
+  // value from the parsed list would strip a just-typed newline or comma,
+  // making it impossible to type a second entry.
+  const [sitesText, setSitesText] = useState(formatSites(techConfig.preSeededSites));
+  const [presetsText, setPresetsText] = useState(techConfig.quickAddPresets.join(', '));
+
+  const save = () => {
+    const next: TechConfig = {
+      ...draft,
+      preSeededSites: parseSites(sitesText),
+      quickAddPresets: parsePresets(presetsText),
+    };
+    const problem = thresholdError(next);
+    if (problem) {
+      useAppStore.getState().toast('error', problem);
+      return;
+    }
+    void updateTechConfig(next);
+  };
+
+  const reset = () => {
+    setDraft({ ...techConfig });
+    setSitesText(formatSites(techConfig.preSeededSites));
+    setPresetsText(techConfig.quickAddPresets.join(', '));
+  };
 
   const set = <K extends keyof TechConfig>(key: K, value: TechConfig[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
@@ -97,33 +146,16 @@ export default function TechSettings() {
         >
           <textarea
             className="input h-24 font-mono text-xs"
-            value={draft.preSeededSites.map((s) => (s.slug ? `${s.name}|${s.slug}` : s.name)).join('\n')}
-            onChange={(e) =>
-              set(
-                'preSeededSites',
-                e.target.value
-                  .split('\n')
-                  .map((l) => l.trim())
-                  .filter(Boolean)
-                  .map((l) => {
-                    const [name, slug] = l.split('|').map((p) => p.trim());
-                    return slug ? { name, slug } : { name };
-                  })
-              )
-            }
+            value={sitesText}
+            onChange={(e) => setSitesText(e.target.value)}
           />
         </Field>
 
         <Field label="Quick-add preset labels" hint="Comma-separated buttons in the Add Site modal">
           <input
             className="input"
-            value={draft.quickAddPresets.join(', ')}
-            onChange={(e) =>
-              set(
-                'quickAddPresets',
-                e.target.value.split(',').map((p) => p.trim()).filter(Boolean)
-              )
-            }
+            value={presetsText}
+            onChange={(e) => setPresetsText(e.target.value)}
           />
         </Field>
 
@@ -193,8 +225,8 @@ export default function TechSettings() {
         </Field>
 
         <div className="flex justify-end gap-2 pt-2">
-          <button className="btn-secondary" onClick={() => setDraft({ ...techConfig })}>Reset</button>
-          <button className="btn-primary" onClick={() => void updateTechConfig(draft)}>Save Settings</button>
+          <button className="btn-secondary" onClick={reset}>Reset</button>
+          <button className="btn-primary" onClick={save}>Save Settings</button>
         </div>
       </div>
     </div>

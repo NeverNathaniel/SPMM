@@ -15,8 +15,9 @@ export default function AddSiteModal({ onClose }: { onClose: () => void }) {
 
   const submit = (siteName: string, siteSlug?: string) => {
     if (!siteName.trim()) return;
-    addSite(siteName, siteSlug);
-    onClose();
+    // Keep the modal open (with the user's input) if the site was rejected,
+    // e.g. a duplicate URL — the store has already toasted the reason.
+    if (addSite(siteName, siteSlug)) onClose();
   };
 
   const requestChange = () => {

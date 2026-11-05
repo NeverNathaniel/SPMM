@@ -15,6 +15,8 @@ export interface SpmmApi {
   onScanProgress(cb: (p: ScanProgress) => void): () => void;
   loadSession(): Promise<SessionState | null>;
   saveSession(state: SessionState): Promise<{ ok: boolean; error?: string }>;
+  /** Blocking save used while the window is closing, when async IPC may not complete. */
+  saveSessionSync(state: SessionState): { ok: boolean; error?: string };
   clearSession(): Promise<void>;
   getTechConfig(): Promise<TechConfig>;
   saveTechConfig(cfg: TechConfig): Promise<{ ok: boolean; error?: string }>;
