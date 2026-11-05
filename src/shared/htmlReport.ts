@@ -4,7 +4,8 @@
  * Self-contained (inline CSS), renders cleanly in any browser, printable.
  * Styling is carried over from the proven SPMM web-app report with sections
  * reorganised per the desktop plan: header, stats, per-site mapping tables,
- * path-length warnings, ineligible files, unmapped and skipped folders.
+ * path-length warnings, files not included in the CSV, ineligible files,
+ * unmapped and skipped folders.
  */
 
 import type {
@@ -16,6 +17,7 @@ import type {
 } from './types';
 import { flattenTree } from './mappingEngine';
 import { REASON_LABELS, reasonDetail } from './classify';
+import { planMigration } from './migrationPlan';
 
 function esc(s: string): string {
   return s
@@ -47,6 +49,7 @@ export function generateHtmlReport(input: ReportInput): string {
   const ineligible = allFolders.filter((f) => f.ineligibleFiles.length > 0 || f.hasIneligibleFolderName);
   const ineligibleFileTotal = allFolders.reduce((n, f) => n + f.ineligibleFiles.length, 0);
   const pct = allFolders.length ? Math.round((active.length / allFolders.length) * 100) : 0;
+  const plan = planMigration(roots, resolvedByPath);
 
   const statBox = (value: string | number, label: string, cls = '') =>
     `<div class="stat-box ${cls}"><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div>`;
@@ -97,6 +100,25 @@ export function generateHtmlReport(input: ReportInput): string {
       </div>`
     : '';
 
+  const strandedSection = plan.stranded.length
+    ? `<div class="card callout callout-amber">
+        <h2>⚠ Files Not Included in the CSV</h2>
+        <p>SPMT copies a folder together with all of its subfolders, so a folder's own files can't be sent on their own. Each folder below has a subfolder that is skipped or mapped elsewhere, so only its subfolders are in the CSV. Move these files into a subfolder or migrate them separately.</p>
+        <div class="table-container"><table>
+          <thead><tr><th>Local Folder</th><th>Files Left Out</th><th>Intended Destination</th></tr></thead>
+          <tbody>${plan.stranded
+            .map(
+              ({ node, mapping }) => `<tr>
+                <td>${esc(node.path)}</td>
+                <td>${node.fileCount}</td>
+                <td>${esc(mapping.resolvedTargetUrl)}</td>
+              </tr>`
+            )
+            .join('\n')}</tbody>
+        </table></div>
+      </div>`
+    : '';
+
   const ineligibleRows = ineligible
     .flatMap((f) => {
       const rows: string[] = [];
@@ -139,7 +161,7 @@ export function generateHtmlReport(input: ReportInput): string {
   const skippedSection = skipped.length
     ? `<div class="card callout callout-grey">
         <h2>Skipped Folders (${skipped.length})</h2>
-        <p>These folders were intentionally excluded from the migration CSV.</p>
+        <p>Files directly in these folders were intentionally excluded from the migration CSV. Their subfolders migrate unless they are skipped too.</p>
         <ul>${skipped.map((m) => `<li>${esc(m.localPath)}</li>`).join('')}</ul>
       </div>`
     : '';
@@ -204,6 +226,7 @@ export function generateHtmlReport(input: ReportInput): string {
       ${statBox(inheritedCount, 'Inherited', 'success')}
       ${statBox(unmapped.length, 'Unmapped', unmapped.length ? 'warning' : 'success')}
       ${statBox(skipped.length, 'Skipped')}
+      ${statBox(plan.rows.length, 'CSV Rows')}
     </div>
     <div class="progress" title="${pct}% of folders have a resolved destination"><div style="width:${pct}%"></div></div>
     <p class="muted" style="margin-top:6px">${pct}% of folders have a resolved destination</p>
@@ -211,6 +234,7 @@ export function generateHtmlReport(input: ReportInput): string {
 
   ${siteSections}
   ${pathWarningSection}
+  ${strandedSection}
   ${ineligibleSection}
   ${unmappedSection}
   ${skippedSection}

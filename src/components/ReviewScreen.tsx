@@ -61,7 +61,7 @@ export default function ReviewScreen() {
   const doExport = async () => {
     setExporting(true);
     try {
-      const csv = generateSpmtCsv(list, sites, techConfig.tenantDomain);
+      const csv = generateSpmtCsv(roots, list, sites, techConfig.tenantDomain);
       const html = generateHtmlReport({
         roots,
         sites,
@@ -194,6 +194,57 @@ export default function ReviewScreen() {
         </SectionCard>
       )}
 
+      {/* 2b — Stranded files (folder's own files can't be a CSV row) */}
+      {summary.strandedFolders.length > 0 && (
+        <SectionCard
+          tone="amber"
+          title={`⚠ Files Not Included in the CSV (${summary.strandedFolders.length} folder${summary.strandedFolders.length > 1 ? 's' : ''}) — acknowledge each folder to proceed`}
+        >
+          <p className="text-xs text-slate-600 mb-2">
+            SPMT copies a folder together with all of its subfolders, so it can&apos;t send a
+            folder&apos;s own files on their own. Each folder below has a subfolder that is
+            skipped or mapped somewhere else, so only its subfolders are in the CSV — the files
+            sitting directly in it are not. Move those files into a subfolder, skip the folder, or
+            migrate them separately.
+          </p>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-slate-500">
+                <th className="py-1 pr-2">Ack</th>
+                <th className="py-1 pr-3">Local folder</th>
+                <th className="py-1 pr-3">Files left out</th>
+                <th className="py-1 pr-3">Intended destination</th>
+                <th className="py-1" />
+              </tr>
+            </thead>
+            <tbody>
+              {summary.strandedFolders.map(({ node, mapping }) => (
+                <tr key={node.path} className="border-t border-slate-100">
+                  <td className="py-1.5 pr-2">
+                    <input
+                      type="checkbox"
+                      checked={ackedSet.has(node.path)}
+                      onChange={() => toggleAcknowledged(node.path)}
+                    />
+                  </td>
+                  <td className="py-1.5 pr-3 break-all">{node.path}</td>
+                  <td className="py-1.5 pr-3">{node.fileCount}</td>
+                  <td className="py-1.5 pr-3 break-all">{mapping.resolvedTargetUrl}</td>
+                  <td className="py-1.5">
+                    <button
+                      className="text-[11px] text-slate-500 hover:text-slate-700 hover:underline whitespace-nowrap"
+                      onClick={() => toggleSkip(node.path)}
+                    >
+                      Skip folder
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </SectionCard>
+      )}
+
       {/* 3 — Ineligible files */}
       {ineligibleMigrating.length > 0 && (
         <SectionCard
@@ -302,8 +353,13 @@ export default function ReviewScreen() {
             </div>
           );
         })}
-        {list.filter((m) => !m.skipped).length === 0 && (
+        {list.filter((m) => !m.skipped).length === 0 ? (
           <p className="text-sm text-slate-400">Nothing mapped yet.</p>
+        ) : (
+          <p className="text-[11px] text-slate-400 mt-2">
+            Skip excludes only the files directly in that folder; its subfolders still migrate
+            unless they are skipped too.
+          </p>
         )}
       </SectionCard>
 
@@ -329,7 +385,12 @@ export default function ReviewScreen() {
           <span className="text-xs text-slate-500">
             {summary.hardBlocks.length > 0 && `${summary.hardBlocks.length} hard block(s). `}
             {summary.unacknowledgedPaths.length > 0 && `${summary.unacknowledgedPaths.length} unacknowledged warning(s). `}
-            {summary.hardBlocks.length === 0 && summary.unacknowledgedPaths.length === 0 && 'Map at least one folder.'}
+            {summary.hardBlocks.length === 0 && summary.unacknowledgedPaths.length === 0 && 'Nothing to migrate yet — map at least one folder.'}
+          </span>
+        )}
+        {summary.exportReady && (
+          <span className="text-xs text-slate-500">
+            {summary.csvRowCount} CSV row{summary.csvRowCount === 1 ? '' : 's'} — each covers a folder and everything beneath it
           </span>
         )}
         {exportResult?.ok && (

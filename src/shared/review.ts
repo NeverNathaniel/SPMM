@@ -4,12 +4,15 @@
  * Hard blocks (cannot be acknowledged away): destination depth at/over the
  * block threshold, resolved path length over the block threshold, and
  * ineligible *folder names* on mapped folders.
- * Acknowledgeable: path length warnings (amber) and ineligible files.
+ * Acknowledgeable: path length warnings (amber), ineligible files, and
+ * stranded files (a folder's own files that can't be a CSV row because its
+ * subfolders go elsewhere — see migrationPlan.ts).
  * Informational: depth warnings, unmapped folders.
  */
 
 import type { DirectoryRoot, FolderNode, ResolvedMapping } from './types';
 import { flattenTree } from './mappingEngine';
+import { planMigration, type StrandedFolder } from './migrationPlan';
 
 export interface ReviewSummary {
   totalFolders: number;
@@ -25,6 +28,10 @@ export interface ReviewSummary {
   pathBlocks: ResolvedMapping[]; // red, need per-folder ack (not a hard block — see below)
   ineligibleFolders: FolderNode[]; // need per-folder-group ack
   depthWarnings: ResolvedMapping[]; // informational
+  /** Mapped folders whose own files are not in the CSV; need per-folder ack */
+  strandedFolders: StrandedFolder[];
+  /** Number of rows the SPMT CSV will contain */
+  csvRowCount: number;
 
   unacknowledgedPaths: string[];
   exportReady: boolean;
@@ -67,19 +74,22 @@ export function buildReviewSummary(
   const depthWarnings = active.filter((m) => m.depthStatus === 'warn');
 
   const ineligibleFolders = allFolders.filter((f) => f.ineligibleFiles.length > 0);
+  const plan = planMigration(roots, resolvedByPath);
 
-  // Everything that demands a checkbox: amber/red path rows + folders with
-  // ineligible files (only when the folder actually migrates).
+  // Everything that demands a checkbox: amber/red path rows, folders with
+  // ineligible files (only when the folder actually migrates), and stranded
+  // folders whose own files won't be in the CSV.
   const needsAck = new Set<string>();
   for (const m of [...pathWarnings, ...pathBlocks]) needsAck.add(m.localPath);
   for (const f of ineligibleFolders) {
     if (resolvedByPath.get(f.path) && !resolvedByPath.get(f.path)!.skipped) needsAck.add(f.path);
   }
+  for (const s of plan.stranded) needsAck.add(s.node.path);
 
   const unacknowledgedPaths = [...needsAck].filter((p) => !acked.has(p));
 
   const exportReady =
-    hardBlocks.length === 0 && unacknowledgedPaths.length === 0 && active.length > 0;
+    hardBlocks.length === 0 && unacknowledgedPaths.length === 0 && plan.rows.length > 0;
 
   return {
     totalFolders: allFolders.length,
@@ -93,6 +103,8 @@ export function buildReviewSummary(
     pathBlocks,
     ineligibleFolders,
     depthWarnings,
+    strandedFolders: plan.stranded,
+    csvRowCount: plan.rows.length,
     unacknowledgedPaths,
     exportReady,
   };

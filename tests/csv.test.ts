@@ -16,54 +16,52 @@ describe('generateSpmtCsv', () => {
   const tree = folder('C:\\HR', [payroll]);
   const roots = [root('C:\\HR', tree)];
   const hrSite = site('Contoso HR', 'HR', [spFolder('Payroll')]);
+  const payrollMapping = {
+    localPath: payroll.path,
+    localFolderId: payroll.id,
+    spSiteId: hrSite.id,
+    spFolderPath: 'Payroll',
+  };
 
-  it('emits one row per resolved mapping with SPMT columns', () => {
-    const resolved = resolveMappings(
-      roots,
-      [hrSite],
-      [{ localPath: payroll.path, localFolderId: payroll.id, spSiteId: hrSite.id, spFolderPath: 'Payroll' }],
-      [], [], CONFIG
-    );
-    const csv = generateSpmtCsv(resolved, [hrSite], CONFIG.tenantDomain);
-    const lines = csv.trim().split('\r\n');
-
-    // No header row — SPMT treats every line as a migration task.
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toBe(
-      'C:\\HR\\Payroll,,,https://contoso.sharepoint.com/sites/HR,Documents,Payroll'
-    );
-    // Inherited row is spelled out explicitly for SPMT.
-    expect(lines[1]).toBe(
-      'C:\\HR\\Payroll\\2024,,,https://contoso.sharepoint.com/sites/HR,Documents,Payroll/2024'
-    );
+  it('writes one row per uniformly mapped subtree, with SPMT columns and no header', () => {
+    const resolved = resolveMappings(roots, [hrSite], [payrollMapping], [], [], CONFIG);
+    const csv = generateSpmtCsv(roots, resolved, [hrSite], CONFIG.tenantDomain);
+    // SPMT copies Payroll recursively, so 2024 is covered by this one row.
+    expect(csv).toBe('C:\\HR\\Payroll,,,https://contoso.sharepoint.com/sites/HR,Documents,Payroll\r\n');
   });
 
-  it('omits skipped folders entirely', () => {
+  it('splits into child rows when a subfolder is skipped', () => {
+    const other = folder('C:\\HR\\Payroll\\2023');
+    const p = folder('C:\\HR\\Payroll', [other, folder('C:\\HR\\Payroll\\2024')]);
+    const r = [root('C:\\HR', folder('C:\\HR', [p]))];
     const resolved = resolveMappings(
-      roots,
+      r,
       [hrSite],
-      [{ localPath: payroll.path, localFolderId: payroll.id, spSiteId: hrSite.id, spFolderPath: 'Payroll' }],
+      [{ ...payrollMapping, localPath: p.path, localFolderId: p.id }],
       ['C:\\HR\\Payroll\\2024'],
       [],
       CONFIG
     );
-    const csv = generateSpmtCsv(resolved, [hrSite], CONFIG.tenantDomain);
-    expect(csv).not.toContain('2024');
+    const csv = generateSpmtCsv(r, resolved, [hrSite], CONFIG.tenantDomain);
+    expect(csv).toBe(
+      'C:\\HR\\Payroll\\2023,,,https://contoso.sharepoint.com/sites/HR,Documents,Payroll/2023\r\n'
+    );
   });
 
   it('preserves UNC source paths as-is', () => {
     const uncTree = folder('\\\\SERVER\\Accounting\\AR');
+    const uncRoots = [root('\\\\SERVER\\Accounting\\AR', uncTree)];
     const resolved = resolveMappings(
-      [root('\\\\SERVER\\Accounting\\AR', uncTree)],
+      uncRoots,
       [hrSite],
       [{ localPath: uncTree.path, localFolderId: uncTree.id, spSiteId: hrSite.id, spFolderPath: '' }],
       [], [], CONFIG
     );
-    const csv = generateSpmtCsv(resolved, [hrSite], CONFIG.tenantDomain);
+    const csv = generateSpmtCsv(uncRoots, resolved, [hrSite], CONFIG.tenantDomain);
     expect(csv).toContain('\\\\SERVER\\Accounting\\AR,,,');
   });
 
   it('produces an empty file when nothing migrates', () => {
-    expect(generateSpmtCsv([], [hrSite], CONFIG.tenantDomain)).toBe('');
+    expect(generateSpmtCsv(roots, [], [hrSite], CONFIG.tenantDomain)).toBe('');
   });
 });

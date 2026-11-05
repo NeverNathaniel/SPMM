@@ -1,8 +1,10 @@
 /**
  * SPMT-compatible CSV generation.
  *
- * Format (one row per resolved mapping, explicit + inherited — SPMT needs
- * every path spelled out). Columns, in order:
+ * One row per folder chosen by the migration plan (src/shared/migrationPlan.ts):
+ * SPMT copies each source folder recursively, so a row is written for the
+ * highest folder whose whole subtree lands in one place, not for every
+ * resolved folder. Columns, in order:
  *
  *   Source, SourceDocLib, SourceSubFolder, TargetWeb, TargetDocLib, TargetSubFolder
  *
@@ -15,14 +17,15 @@
  * read as a task whose TargetWeb ("TargetWeb") is not a URL, blocking the
  * import. (Migration Manager documents headers as optional; SPMT does not.)
  *
- * Skipped folders are omitted entirely. Source paths are written exactly as
+ * Skipped folders' own files are omitted. Source paths are written exactly as
  * scanned (Rule 7) — no formula-prefix neutralisation is applied because this
  * file is consumed by SPMT, where an injected apostrophe would corrupt the
  * path. Open the HTML summary, not this CSV, in spreadsheet software.
  */
 
-import type { ResolvedMapping, SharePointSite } from './types';
+import type { DirectoryRoot, ResolvedMapping, SharePointSite } from './types';
 import { siteUrl } from './slug';
+import { planMigration } from './migrationPlan';
 
 export function csvField(value: string): string {
   if (/[",\r\n]/.test(value)) {
@@ -32,15 +35,16 @@ export function csvField(value: string): string {
 }
 
 export function generateSpmtCsv(
-  mappings: ResolvedMapping[],
+  roots: DirectoryRoot[],
+  resolved: ResolvedMapping[],
   sites: SharePointSite[],
   tenantDomain: string
 ): string {
+  const { rows } = planMigration(roots, new Map(resolved.map((m) => [m.localPath, m])));
   const sitesById = new Map(sites.map((s) => [s.id, s]));
   const lines: string[] = [];
 
-  for (const m of mappings) {
-    if (m.skipped) continue;
+  for (const m of rows) {
     const site = sitesById.get(m.spSiteId);
     if (!site) continue;
     lines.push(

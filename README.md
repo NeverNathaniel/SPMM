@@ -41,6 +41,7 @@ src/
     mappingEngine.ts the 7 mapping rules; inherited mappings always derived
     spFolders.ts     immutable SP folder tree ops (add/rename/delete/remap)
     sitePreview.ts   merged live preview of a site's structure under Documents/
+    migrationPlan.ts which folders become CSV rows (SPMT copies recursively)
     review.ts        export gating (hard blocks, acknowledgments)
     csv.ts           SPMT CSV generation
     htmlReport.ts    self-contained HTML summary
@@ -77,18 +78,29 @@ tests/               Vitest suites for everything in src/shared and scanDir
   detection at scan time. Depth blocks and invalid mapped folder names are
   hard blocks; everything else is acknowledge-to-proceed.
 - **Exports** are written to `%APPDATA%/MigrationMapper/exports/<timestamp>/`
-  (or the configured override): `migration-mapping.csv` (one SPMT row per
-  resolved mapping, explicit + inherited; no header row, matching SPMT's
-  bulk-upload format; skipped folders omitted; UNC/local source paths
-  preserved verbatim) and `migration-summary.html`. Exporting
+  (or the configured override): `migration-mapping.csv` (SPMT rows chosen
+  by the migration plan, below; no header row, matching SPMT's bulk-upload
+  format; UNC/local source paths preserved verbatim) and
+  `migration-summary.html`. Exporting
   does not clear the session.
 
 ## Design decisions
 
 - **Slug generation**: auto-generated from the site name (`Contoso HR` →
   `ContosoHR`) with a manually editable slug field in the Add Site modal.
-- **Inherited rows in CSV**: one row per resolved folder (explicit and
-  inherited). Verify against your SPMT version before mass migration.
+- **CSV rows follow SPMT's recursive copy** (`src/shared/migrationPlan.ts`).
+  SPMT migrates a source folder together with all of its subfolders, so a
+  row is written for the highest folder whose whole subtree lands in one
+  place, and nothing beneath it gets its own row. Where a subtree diverges
+  (a subfolder is skipped or mapped elsewhere), the folder gets no row and
+  its children are planned individually — so every file is migrated once,
+  Skip is honoured, and re-mapped subfolders go only to their own
+  destination. The one case SPMT can't express is a diverging folder's
+  *own* files: those are listed on the review screen and in the HTML
+  summary as "not included in the CSV" and must be acknowledged (or the
+  folder skipped) before export.
+- **Skip** excludes the files directly in a folder; its subfolders still
+  migrate unless they are skipped too.
 - **Distribution**: `electron-builder` produces an unsigned NSIS installer and
   portable exe; a GitHub Actions workflow builds artifacts on demand. Code
   signing can be layered in later.
